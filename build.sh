@@ -1200,6 +1200,7 @@ EOF
     rm -rf "$hsrc_staging"
 
     # Create first-boot decompression service for headers package
+    ensure_dir "${pkg_headers}/usr/local/sbin" "${pkg_headers}/etc/systemd/system" "${pkg_headers}/etc/systemd/system/multi-user.target.wants"
     cat > "${pkg_headers}/usr/local/sbin/decompress-kernel-src" << 'EOSCRIPT'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -1239,7 +1240,6 @@ RemainAfterExit=yes
 [Install]
 WantedBy=multi-user.target
 EOSVC
-    ensure_dir "${pkg_headers}/etc/systemd/system/multi-user.target.wants"
     ln -sf /etc/systemd/system/decompress-kernel-src.service \
         "${pkg_headers}/etc/systemd/system/multi-user.target.wants/decompress-kernel-src.service" 2>/dev/null || true
 
