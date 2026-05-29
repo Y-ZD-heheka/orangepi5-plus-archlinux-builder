@@ -1,0 +1,16 @@
+post_install() {
+    echo "Syncing kernel to EFI partition..."
+    cp -f /boot/Image /efi/Image 2>/dev/null || true
+    cp -f /boot/dtbs/rk3588-orangepi-5-plus.dtb /efi/dtbs/rk3588-orangepi-5-plus.dtb 2>/dev/null || true
+    sync
+    echo "Kernel synced to EFI partition."
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    echo "Note: /efi/Image and /efi/dtbs/ were NOT removed."
+    echo "Remove manually if needed."
+}
