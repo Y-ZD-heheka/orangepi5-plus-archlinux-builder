@@ -178,7 +178,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: orangepi5-plus-sd-image
-          path: output/orangepi5-plus-sd-*.img
+          path: |
+            output/orangepi5-plus-sd-*.img.zst
+            output/orangepi5-plus-sd-*.img
           retention-days: 30
           compression-level: 0
 
@@ -187,7 +189,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: orangepi5-plus-nvme-image
-          path: output/orangepi5-plus-nvme-*.img
+          path: |
+            output/orangepi5-plus-nvme-*.img.zst
+            output/orangepi5-plus-nvme-*.img
           retention-days: 30
           compression-level: 0
 
@@ -211,7 +215,7 @@ jobs:
         run: |
           cd output
           shopt -s nullglob
-          for f in *.img *.pkg.tar.zst; do
+          for f in *.img.zst *.img *.pkg.tar.zst; do
             sha256sum "$f" >> checksums.txt
           done
           if [[ -f checksums.txt ]]; then
@@ -275,6 +279,7 @@ jobs:
             # Default login: root / root (serial console ttyS2, 1500000 baud)
             ```
           files: |
+            artifacts/**/*.img.zst
             artifacts/**/*.img
             artifacts/**/*.pkg.tar.zst
             artifacts/**/checksums.txt

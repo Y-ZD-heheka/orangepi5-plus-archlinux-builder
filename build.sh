@@ -786,10 +786,12 @@ EOSCRIPT
     ensure_dir "${rootfs_dir}/boot/extlinux"
 
     # Install kernel source tree for module compilation (if --no-kernel wasn't passed)
+    # Compress with zstd and auto-decompress on first boot
     if [[ "${SKIP_KERNEL:-0}" -eq 0 && -n "${KERNEL_VERSION:-}" && -d "${SOURCES_DIR}/linux" ]]; then
         local ksrc_target="${rootfs_dir}/usr/src/linux-${KERNEL_VERSION}"
-        if [[ ! -d "$ksrc_target" ]]; then
-            info "Installing kernel source tree for module compilation (~1.4GB)..."
+        local ksrc_tarball="${rootfs_dir}/usr/src/linux-${KERNEL_VERSION}.tar.zst"
+        if [[ ! -d "$ksrc_target" && ! -f "$ksrc_tarball" ]]; then
+            info "Preparing compressed kernel source tree..."
             local ksrc_staging="${CACHE_DIR}/kernel-src-staging"
             rm -rf "$ksrc_staging"
             mkdir -p "$ksrc_staging"
@@ -823,16 +825,61 @@ EOSCRIPT
             make -C "${SOURCES_DIR}/linux" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
                 O="$ksrc_staging" modules_prepare 2>/dev/null | tail -3
 
-            # Install into rootfs
-            rm -rf "$ksrc_target"
-            mkdir -p "$(dirname "$ksrc_target")"
-            cp -a "$ksrc_staging" "$ksrc_target"
+            # Compress with zstd
+            info "Compressing kernel source tree with zstd..."
+            ensure_dir "$(dirname "$ksrc_tarball")"
+            tar --zstd -cf "$ksrc_tarball" -C "$ksrc_staging" .
             rm -rf "$ksrc_staging"
 
-            # Fix permissions
-            chown -R 0:0 "$ksrc_target" 2>/dev/null || true
+            local tarball_size
+            tarball_size=$(du -sh "$ksrc_tarball" | cut -f1)
+            info "Compressed kernel source tree: ${tarball_size}"
 
-            # Update /lib/modules symlinks
+            # Create first-boot decompression service
+            cat > "${rootfs_dir}/usr/local/sbin/decompress-kernel-src" << 'EOSCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+KERNEL_VERSION="__KERNEL_VERSION__"
+TARBALL="/usr/src/linux-${KERNEL_VERSION}.tar.zst"
+TARGET="/usr/src/linux-${KERNEL_VERSION}"
+
+[[ -f "$TARBALL" ]] || exit 0
+[[ -d "$TARGET" ]] && exit 0
+
+echo "Decompressing kernel source tree..."
+mkdir -p "$TARGET"
+tar --zstd -xf "$TARBALL" -C "$TARGET"
+chown -R 0:0 "$TARGET" 2>/dev/null || true
+rm -f "$TARBALL"
+
+echo "Kernel source tree decompressed successfully"
+mkdir -p /var/lib
+touch /var/lib/decompress-kernel-src-done
+EOSCRIPT
+            sed -i "s/__KERNEL_VERSION__/${KERNEL_VERSION}/g" \
+                "${rootfs_dir}/usr/local/sbin/decompress-kernel-src"
+            chmod +x "${rootfs_dir}/usr/local/sbin/decompress-kernel-src"
+
+            cat > "${rootfs_dir}/etc/systemd/system/decompress-kernel-src.service" << 'EOSVC'
+[Unit]
+Description=Decompress kernel source tree for module compilation
+After=local-fs.target
+ConditionPathExists=!/var/lib/decompress-kernel-src-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/decompress-kernel-src
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOSVC
+            ensure_dir "${rootfs_dir}/etc/systemd/system/multi-user.target.wants"
+            ln -sf /etc/systemd/system/decompress-kernel-src.service \
+                "${rootfs_dir}/etc/systemd/system/multi-user.target.wants/decompress-kernel-src.service" 2>/dev/null || true
+
+            # Update /lib/modules symlinks (will be valid after first-boot decompression)
             local mod_dir="${rootfs_dir}/lib/modules/${KERNEL_VERSION}"
             if [[ -d "$mod_dir" ]]; then
                 rm -f "${mod_dir}/build" "${mod_dir}/source"
@@ -840,7 +887,7 @@ EOSCRIPT
                 ln -sf "/usr/src/linux-${KERNEL_VERSION}" "${mod_dir}/source"
             fi
 
-            info "Kernel source tree installed ($(du -sh "$ksrc_target" | cut -f1))"
+            info "Compressed kernel source tree installed (${tarball_size}), will auto-decompress on first boot"
         else
             info "Kernel source tree already installed"
         fi
@@ -1020,7 +1067,26 @@ Target: ${TARGET}
 Root PARTUUID (kernel): ${part_uuid}
 Root UUID (fstab): ${root_uuid}
 Root filesystem: ${ROOT_FSTYPE}
+Compressed: $(basename "${image_file}").zst
 EOF
+
+    # Compress image with zstd for distribution
+    info "Compressing image with zstd (this may take a few minutes)..."
+    local compressed_file="${image_file}.zst"
+    rm -f "$compressed_file"
+    zstd -T0 -19 "$image_file" -o "$compressed_file" 2>&1 | tail -3
+    local compressed_size
+    compressed_size=$(du -sh "$compressed_file" | cut -f1)
+    info "Compressed image: ${compressed_size}"
+    echo ""
+    echo "  Compressed: ${compressed_file}"
+    echo "  Size: ${compressed_size} (raw: $((img_size / 1024 / 1024)) MB)"
+    echo ""
+    echo "  To flash:"
+    echo "    zstd -d ${compressed_file} -o /dev/sdX"
+    echo "    # or"
+    echo "    zstdcat ${compressed_file} | dd of=/dev/sdX bs=4M status=progress"
+    echo ""
 }
 
 # ---------------------------------------------------------------------------
@@ -1096,9 +1162,10 @@ EOF
     local pkg_headers; pkg_headers=$(mktemp -d)
     local pkgfile_headers="${OUTPUT_DIR}/linux-op5p-headers-${pkgver}-aarch64.pkg.tar.zst"
 
-    # Strip-copy kernel source tree (same as stage_06 but into package dir)
-    local hsrc="${pkg_headers}/usr/src/linux-${KERNEL_VERSION}"
-    mkdir -p "$hsrc"
+    # Strip-copy kernel source tree and compress with zstd
+    local hsrc_staging="${CACHE_DIR}/kernel-src-headers-staging"
+    rm -rf "$hsrc_staging"
+    mkdir -p "$hsrc_staging"
     tar --exclude='.git' \
         --exclude='Documentation' \
         --exclude='tools' \
@@ -1116,16 +1183,66 @@ EOF
         --exclude='arch/s390' --exclude='arch/sh' \
         --exclude='arch/sparc' --exclude='arch/um' \
         --exclude='arch/x86' --exclude='arch/xtensa' \
-        -cf - -C "$kernel_src" . | tar -xf - -C "$hsrc"
+        -cf - -C "$kernel_src" . | tar -xf - -C "$hsrc_staging"
 
     # Copy .config and Module.symvers
-    cp "${kernel_build}/.config" "${hsrc}/.config"
+    cp "${kernel_build}/.config" "${hsrc_staging}/.config"
     [[ -f "${kernel_build}/Module.symvers" ]] && \
-        cp "${kernel_build}/Module.symvers" "${hsrc}/"
+        cp "${kernel_build}/Module.symvers" "${hsrc_staging}/"
 
     # modules_prepare to build the scaffolding
     make -C "$kernel_src" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
-        O="$hsrc" modules_prepare 2>/dev/null | tail -3
+        O="$hsrc_staging" modules_prepare 2>/dev/null | tail -3
+
+    # Compress with zstd
+    local hsrc_tarball="${pkg_headers}/usr/src/linux-${KERNEL_VERSION}.tar.zst"
+    ensure_dir "$(dirname "$hsrc_tarball")"
+    tar --zstd -cf "$hsrc_tarball" -C "$hsrc_staging" .
+    rm -rf "$hsrc_staging"
+
+    # Create first-boot decompression service for headers package
+    cat > "${pkg_headers}/usr/local/sbin/decompress-kernel-src" << 'EOSCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+
+KERNEL_VERSION="__KERNEL_VERSION__"
+TARBALL="/usr/src/linux-${KERNEL_VERSION}.tar.zst"
+TARGET="/usr/src/linux-${KERNEL_VERSION}"
+
+[[ -f "$TARBALL" ]] || exit 0
+[[ -d "$TARGET" ]] && exit 0
+
+echo "Decompressing kernel source tree..."
+mkdir -p "$TARGET"
+tar --zstd -xf "$TARBALL" -C "$TARGET"
+chown -R 0:0 "$TARGET" 2>/dev/null || true
+rm -f "$TARBALL"
+
+echo "Kernel source tree decompressed successfully"
+mkdir -p /var/lib
+touch /var/lib/decompress-kernel-src-done
+EOSCRIPT
+    sed -i "s/__KERNEL_VERSION__/${KERNEL_VERSION}/g" \
+        "${pkg_headers}/usr/local/sbin/decompress-kernel-src"
+    chmod +x "${pkg_headers}/usr/local/sbin/decompress-kernel-src"
+
+    cat > "${pkg_headers}/etc/systemd/system/decompress-kernel-src.service" << 'EOSVC'
+[Unit]
+Description=Decompress kernel source tree for module compilation
+After=local-fs.target
+ConditionPathExists=!/var/lib/decompress-kernel-src-done
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/decompress-kernel-src
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOSVC
+    ensure_dir "${pkg_headers}/etc/systemd/system/multi-user.target.wants"
+    ln -sf /etc/systemd/system/decompress-kernel-src.service \
+        "${pkg_headers}/etc/systemd/system/multi-user.target.wants/decompress-kernel-src.service" 2>/dev/null || true
 
     # Create /usr/lib/modules/<ver>{build,source} symlinks
     local mod_dir="${pkg_headers}/usr/lib/modules/${KERNEL_VERSION}"
