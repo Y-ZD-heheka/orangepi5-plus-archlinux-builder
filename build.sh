@@ -1058,6 +1058,15 @@ GF
     echo "    root / root"
     echo ""
 
+    # Compress image with zstd for distribution
+    info "Compressing image with zstd (this may take a few minutes)..."
+    local compressed_file="${image_file}.zst"
+    rm -f "$compressed_file"
+    zstd -T0 -19 --rm "$image_file" -o "$compressed_file" 2>&1 | tail -3
+    local compressed_size
+    compressed_size=$(du -sh "$compressed_file" | cut -f1)
+    info "Compressed image: ${compressed_size}"
+
     cat > "${OUTPUT_DIR}/image-info.txt" << EOF
 Orange Pi 5 Plus ${TARGET^^} Image
 Built: $(date)
@@ -1069,14 +1078,6 @@ Root UUID (fstab): ${root_uuid}
 Root filesystem: ${ROOT_FSTYPE}
 EOF
 
-    # Compress image with zstd for distribution
-    info "Compressing image with zstd (this may take a few minutes)..."
-    local compressed_file="${image_file}.zst"
-    rm -f "$compressed_file"
-    zstd -T0 -19 --rm "$image_file" -o "$compressed_file" 2>&1 | tail -3
-    local compressed_size
-    compressed_size=$(du -sh "$compressed_file" | cut -f1)
-    info "Compressed image: ${compressed_size}"
     echo ""
     echo "  Compressed: ${compressed_file}"
     echo "  Size: ${compressed_size}"
