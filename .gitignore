@@ -1,0 +1,18 @@
+# Build artifacts
+build/
+cache/
+output/
+
+# OpenCode internal files
+.omo/
+.opencode/sessions/
+.opencode/skills/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
