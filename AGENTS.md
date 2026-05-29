@@ -21,7 +21,7 @@ op5p_diy/
 │   ├── kernel/       # Kernel build output (O=build/kernel)
 │   └── toolchain/    # aarch64 cross-compiler (ARM GNU Toolchain 13.3)
 ├── cache/            # Rootfs tarball, extracted rootfs, intermediate files
-└── output/           # Final .img files (orangepi5-plus-{sd,nvme}-YYYYMMDD.img)
+└── output/           # Final .img.zst files (orangepi5-plus-{sd,nvme}-YYYYMMDD.img.zst)
 ```
 
 ## WHERE TO LOOK
