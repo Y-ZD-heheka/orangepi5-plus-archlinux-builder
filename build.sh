@@ -45,19 +45,34 @@ ROOT_START_MB=$((BOOT_START_MB + BOOT_SIZE_MB))
 ROOT_SIZE_MB=$((IMAGE_SIZE_MB - ROOT_START_MB))
 ROOT_FSTYPE="${ROOT_FSTYPE:-xfs}"     # xfs or ext4
 
-# Chinese mirrors for faster downloads in China
-ALARM_MIRROR="${ALARM_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm}"
+# ---------------------------------------------------------------------------
+# Mirror sources: auto-detect GitHub Actions vs local (China) build
+# ---------------------------------------------------------------------------
+if [[ -n "${GITHUB_ACTIONS:-}" ]]; then
+    # GitHub Actions: use official upstream sources (fast from GitHub infra)
+    ALARM_MIRROR="http://os.archlinuxarm.org"
+    UBOOT_REPO="https://source.denx.de/u-boot/u-boot.git"
+    LINUX_REPO="https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git"
+    TFA_REPO="https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git"
+    RKBIN_REPO="https://github.com/armbian/rkbin.git"
+    RKBIN_TARBALL="https://github.com/armbian/rkbin/archive/refs/heads/master.tar.gz"
+    TOOLCHAIN_VERSION="15.2.rel1"
+    TOOLCHAIN_URL="https://developer.arm.com/-/media/Files/downloads/gnu/${TOOLCHAIN_VERSION}/binrel/arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu.tar.xz"
+    TOOLCHAIN_URL_FALLBACK="$TOOLCHAIN_URL"
+else
+    # Local build (China): use Chinese mirrors for faster downloads
+    ALARM_MIRROR="${ALARM_MIRROR:-https://mirrors.tuna.tsinghua.edu.cn/archlinuxarm}"
+    UBOOT_REPO="https://gitee.com/u-boot/u-boot.git"
+    LINUX_REPO="https://mirrors.ustc.edu.cn/linux.git"
+    TFA_REPO="https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git"
+    RKBIN_REPO="https://github.com/armbian/rkbin.git"
+    RKBIN_TARBALL="https://github.com/armbian/rkbin/archive/refs/heads/master.tar.gz"
+    TOOLCHAIN_VERSION="15.2.rel1"
+    TOOLCHAIN_URL="https://mirrors.huaweicloud.com/arm-gnu-toolchain/${TOOLCHAIN_VERSION}/binrel/arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu.tar.xz"
+    TOOLCHAIN_URL_FALLBACK="https://developer.arm.com/-/media/Files/downloads/gnu/${TOOLCHAIN_VERSION}/binrel/arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu.tar.xz"
+fi
 
-# Use mirrors to avoid intermittent GitHub SSL issues in China
-UBOOT_REPO="https://gitee.com/u-boot/u-boot.git"
-LINUX_REPO="https://mirrors.ustc.edu.cn/linux.git"
-TFA_REPO="https://git.trustedfirmware.org/TF-A/trusted-firmware-a.git"
-RKBIN_REPO="https://github.com/armbian/rkbin.git"
-RKBIN_TARBALL="https://github.com/armbian/rkbin/archive/refs/heads/master.tar.gz"
 ALARM_ROOTFS_URL="${ALARM_MIRROR}/os/ArchLinuxARM-aarch64-latest.tar.gz"
-TOOLCHAIN_VERSION="15.2.rel1"
-TOOLCHAIN_URL="https://mirrors.huaweicloud.com/arm-gnu-toolchain/${TOOLCHAIN_VERSION}/binrel/arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu.tar.xz"
-TOOLCHAIN_URL_FALLBACK="https://developer.arm.com/-/media/Files/downloads/gnu/${TOOLCHAIN_VERSION}/binrel/arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu.tar.xz"
 TOOLCHAIN_DIRNAME="arm-gnu-toolchain-${TOOLCHAIN_VERSION}-x86_64-aarch64-none-linux-gnu"
 
 CROSS_COMPILE="${CROSS_COMPILE:-aarch64-linux-gnu-}"
