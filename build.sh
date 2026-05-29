@@ -664,7 +664,7 @@ stage_06_rootfs() {
     if [[ ! -f "${rootfs_dir}/.extracted" ]]; then
         info "Extracting root filesystem..."
         ensure_dir "$rootfs_dir"
-        bsdtar -xpf "$tarball" -C "$rootfs_dir" --options no-fflags 2>&1 | grep -v "Cannot restore extended attributes" || true
+        bsdtar -xpf "$tarball" -C "$rootfs_dir" 2>&1 | grep -v "Cannot restore extended attributes" || true
         touch "${rootfs_dir}/.extracted"
     fi
 
