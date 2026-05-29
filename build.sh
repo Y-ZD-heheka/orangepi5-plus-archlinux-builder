@@ -783,7 +783,7 @@ EOSCRIPT
     ln -sf /etc/systemd/system/resize-filesystem.service \
         "${rootfs_dir}/etc/systemd/system/multi-user.target.wants/resize-filesystem.service" 2>/dev/null || true
 
-    ensure_dir "${rootfs_dir}/boot/extlinux"
+    ensure_dir "${rootfs_dir}/efi/extlinux"
 
     # Install kernel source tree for module compilation (if --no-kernel wasn't passed)
     # Compress with zstd and auto-decompress on first boot
@@ -991,7 +991,7 @@ GF
     # Step 5: Update fstab with UUID
     local fstab_tmp="${CACHE_DIR}/fstab-$$.txt"
     printf 'UUID=%s / %s defaults 0 1\n' "${root_uuid}" "${ROOT_FSTYPE}" > "$fstab_tmp"
-    printf 'LABEL=ALARMBOOT /boot vfat defaults 0 2\n' >> "$fstab_tmp"
+    printf 'LABEL=ALARMBOOT /efi vfat defaults 0 2\n' >> "$fstab_tmp"
     printf 'tmpfs /tmp tmpfs defaults,nosuid,nodev 0 0\n' >> "$fstab_tmp"
     guestfish > /dev/null 2>&1 << GF
 add-drive $image_file format:raw
@@ -1113,12 +1113,20 @@ stage_08_packages() {
     local pkg_kernel; pkg_kernel=$(mktemp -d)
     local pkgfile_kernel="${OUTPUT_DIR}/linux-op5p-${pkgver}-aarch64.pkg.tar.zst"
 
-    # Kernel Image
+    # Kernel Image - install to /efi/ for U-Boot
+    install -Dm644 "${kernel_build}/arch/arm64/boot/Image" \
+        "${pkg_kernel}/efi/Image"
+
+    # Device Tree Blobs - install to /efi/dtbs/ for U-Boot
+    local dtb_dir="${kernel_build}/arch/arm64/boot/dts/rockchip"
+    if [[ -d "$dtb_dir" ]]; then
+        ensure_dir "${pkg_kernel}/efi/dtbs"
+        cp "$dtb_dir"/*.dtb "${pkg_kernel}/efi/dtbs/"
+    fi
+
+    # Also install to /boot/ for compatibility
     install -Dm644 "${kernel_build}/arch/arm64/boot/Image" \
         "${pkg_kernel}/boot/Image"
-
-    # Device Tree Blobs (matches extlinux.conf FDTDIR /dtbs)
-    local dtb_dir="${kernel_build}/arch/arm64/boot/dts/rockchip"
     if [[ -d "$dtb_dir" ]]; then
         ensure_dir "${pkg_kernel}/boot/dtbs"
         cp "$dtb_dir"/*.dtb "${pkg_kernel}/boot/dtbs/"
@@ -1145,6 +1153,26 @@ packager = op5p-diy-builder
 size = ${pkg_size_kernel}
 arch = aarch64
 license = GPL2
+EOF
+
+    # Create .install script for post-install sync to EFI partition
+    cat > "${pkg_kernel}/.INSTALL" << 'EOF'
+post_install() {
+    echo "Syncing kernel to EFI partition..."
+    cp -f /boot/Image /efi/Image 2>/dev/null || true
+    cp -f /boot/dtbs/rk3588-orangepi-5-plus.dtb /efi/dtbs/rk3588-orangepi-5-plus.dtb 2>/dev/null || true
+    sync
+    echo "Kernel synced to EFI partition."
+}
+
+post_upgrade() {
+    post_install
+}
+
+post_remove() {
+    echo "Note: /efi/Image and /efi/dtbs/ were NOT removed."
+    echo "Remove manually if needed."
+}
 EOF
 
     # Package
