@@ -106,9 +106,12 @@ jobs:
             build-essential git wget parted dosfstools mtools libarchive-tools \
             bc flex bison xfsprogs libguestfs-tools libguestfs-dev \
             qemu-system-arm qemu-utils libvirt-daemon-system \
-            pkg-config libssl-dev rsync pigz zstd
+            pkg-config libssl-dev rsync pigz zstd \
+            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu
           sudo systemctl start libvirtd || true
           sudo usermod -a -G libvirt $USER || true
+          echo "=== System cross-compiler ==="
+          aarch64-linux-gnu-gcc --version | head -1
 
       - name: Cache toolchain
         id: cache-toolchain
@@ -205,12 +208,18 @@ jobs:
       - name: Generate checksums
         run: |
           cd output
+          shopt -s nullglob
           for f in *.img *.pkg.tar.zst; do
-            [[ -f "$f" ]] && sha256sum "$f" >> checksums.txt
+            sha256sum "$f" >> checksums.txt
           done
-          cat checksums.txt
+          if [[ -f checksums.txt ]]; then
+            cat checksums.txt
+          else
+            echo "No artifacts to checksum"
+          fi
 
       - name: Upload checksums
+        if: hashFiles('output/checksums.txt') != ''
         uses: actions/upload-artifact@v4
         with:
           name: checksums

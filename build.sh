@@ -176,20 +176,41 @@ stage_01_toolchain() {
     local tc_tarball="${CACHE_DIR}/${TOOLCHAIN_DIRNAME}.tar.xz"
 
     if [[ ! -f "$tc_tarball" ]]; then
-        sub "Trying mirror: ${TOOLCHAIN_URL}"
-        wget -c "$TOOLCHAIN_URL" -O "$tc_tarball" || {
-            rm -f "$tc_tarball"
-            warn "Mirror download failed, trying official ARM server..."
-            wget -c "$TOOLCHAIN_URL_FALLBACK" -O "$tc_tarball" || {
+        local mirrors=("$TOOLCHAIN_URL" "$TOOLCHAIN_URL_FALLBACK")
+        local downloaded=0
+        for mirror_url in "${mirrors[@]}"; do
+            sub "Trying: ${mirror_url}"
+            wget -c "$mirror_url" -O "$tc_tarball" 2>&1 | tail -3 || {
                 rm -f "$tc_tarball"
-                error "Toolchain download failed. Install aarch64-linux-gnu-gcc via your package manager."
+                continue
             }
-        }
+            # Validate: must be >50MB and recognized as xz/compressed data
+            local fsize
+            fsize=$(stat -c%s "$tc_tarball" 2>/dev/null || echo 0)
+            if [[ "$fsize" -lt 50000000 ]]; then
+                warn "Downloaded file too small (${fsize} bytes), likely not a real toolchain"
+                rm -f "$tc_tarball"
+                continue
+            fi
+            if ! file "$tc_tarball" | grep -qi "xz\|compressed"; then
+                warn "Downloaded file is not xz format"
+                rm -f "$tc_tarball"
+                continue
+            fi
+            downloaded=1
+            break
+        done
+        if [[ "$downloaded" -eq 0 ]]; then
+            error "Toolchain download failed from all mirrors. Install aarch64-linux-gnu-gcc via your package manager."
+        fi
     fi
 
     info "Extracting toolchain..."
     rm -rf "${BUILD_DIR}/toolchain"
-    tar xf "$tc_tarball" -C "$BUILD_DIR"
+    tar xf "$tc_tarball" -C "$BUILD_DIR" || {
+        rm -f "$tc_tarball"
+        error "Toolchain extraction failed — corrupted download"
+    }
     mv "${BUILD_DIR}/${TOOLCHAIN_DIRNAME}" "${BUILD_DIR}/toolchain"
     rm -f "$tc_tarball"
     CROSS_COMPILE="aarch64-none-linux-gnu-"
