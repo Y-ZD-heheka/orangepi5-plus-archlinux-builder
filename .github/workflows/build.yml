@@ -109,7 +109,7 @@ jobs:
             pkg-config libssl-dev rsync pigz zstd \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libgnutls28-dev uuid-dev \
-            device-tree-compiler python3-libfdt python3-setuptools python3-elftools
+            device-tree-compiler python3-libfdt python3-setuptools python3-pyelftools
           sudo systemctl start libvirtd || true
           sudo usermod -a -G libvirt $USER || true
           echo "=== System cross-compiler ==="
