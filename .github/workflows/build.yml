@@ -108,7 +108,8 @@ jobs:
             qemu-system-arm qemu-utils libvirt-daemon-system \
             pkg-config libssl-dev rsync pigz zstd \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libgnutls28-dev uuid-dev
+            libgnutls28-dev uuid-dev \
+            device-tree-compiler python3-libfdt python3-setuptools
           sudo systemctl start libvirtd || true
           sudo usermod -a -G libvirt $USER || true
           echo "=== System cross-compiler ==="
