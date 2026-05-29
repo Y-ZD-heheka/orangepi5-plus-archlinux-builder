@@ -100,6 +100,7 @@ Options:
   --clean             Remove all build artifacts and cached sources
   --no-kernel         Skip kernel build (for testing bootloader/rootfs only)
   --packages-only     Build kernel and packages (stages 0-5+8, skip rootfs/image)
+  --force-latest      Force fetch latest U-Boot and kernel sources (ignore cache)
   --help, -h          Show this help message
 
 Output:
@@ -311,7 +312,10 @@ stage_04_uboot() {
     if [[ -d "${SOURCES_DIR}/u-boot" ]]; then
         local current_commit
         current_commit=$(git -C "${SOURCES_DIR}/u-boot" rev-parse HEAD 2>/dev/null || true)
-        if [[ "$current_commit" == "$uboot_commit" ]] || [[ -n "$current_commit" && "$uboot_commit" == "master" ]]; then
+        if [[ "$FORCE_LATEST" -eq 1 ]]; then
+            warn "Force update: removing U-Boot cache"
+            rm -rf "${SOURCES_DIR}/u-boot"
+        elif [[ "$current_commit" == "$uboot_commit" ]] || [[ -n "$current_commit" && "$uboot_commit" == "master" ]]; then
             info "U-Boot source already at ${uboot_tag}, skipping clone"
         else
             warn "Updating U-Boot from ${current_commit:0:8}... to ${uboot_tag}"
@@ -395,7 +399,10 @@ stage_05_kernel() {
 
     if [[ -d "${SOURCES_DIR}/linux" ]]; then
         local current_tag; current_tag=$(git -C "${SOURCES_DIR}/linux" describe --tags --exact-match 2>/dev/null || true)
-        if [[ "$current_tag" == "$kernel_tag" ]]; then
+        if [[ "$FORCE_LATEST" -eq 1 ]]; then
+            warn "Force update: removing kernel cache"
+            rm -rf "${SOURCES_DIR}/linux"
+        elif [[ "$current_tag" == "$kernel_tag" ]]; then
             info "Kernel source already at ${kernel_tag}, skipping clone"
         else
             warn "Updating kernel from ${current_tag:-unknown} to ${kernel_tag}"
@@ -1129,6 +1136,7 @@ CLEAN_BUILD=0
 SKIP_KERNEL=0
 START_STAGE=0
 PACKAGES_ONLY=0
+FORCE_LATEST=0
 TARGET="${TARGET:-sd}"
 
 while [[ $# -gt 0 ]]; do
@@ -1139,6 +1147,7 @@ while [[ $# -gt 0 ]]; do
         --no-kernel) SKIP_KERNEL=1; shift ;;
         --stage) START_STAGE="$2"; shift 2 ;;
         --packages-only) PACKAGES_ONLY=1; shift ;;
+        --force-latest) FORCE_LATEST=1; shift ;;
         *) error "Unknown: $1 (use --help)" ;;
     esac
 done
