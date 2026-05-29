@@ -5,8 +5,7 @@ output/
 
 # OpenCode internal files
 .omo/
-.opencode/sessions/
-.opencode/skills/
+.opencode/
 
 # OS files
 .DS_Store
