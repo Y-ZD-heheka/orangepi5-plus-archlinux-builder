@@ -49,7 +49,9 @@ sudo apt install build-essential git wget parted dosfstools mtools bsdtar \
 
 构建完成后输出：
 ```
-output/orangepi5-plus-archlinux-20250525.img
+output/orangepi5-plus-sd-YYYYMMDD.img       # 原始镜像（8GB）
+output/orangepi5-plus-sd-YYYYMMDD.img.zst   # 压缩镜像（~2-3GB，用于分发）
+output/linux-op5p-*.pkg.tar.zst             # 内核安装包
 ```
 
 ## 分阶段构建
@@ -84,9 +86,16 @@ output/orangepi5-plus-archlinux-20250525.img
 # 确认 SD 卡设备
 lsblk
 
-# 刷入镜像（注意替换 /dev/sdX 为正确的设备）
-sudo dd if=output/orangepi5-plus-archlinux-20250525.img of=/dev/sdX \
-        bs=4M status=progress conv=fsync
+# 方法 1：直接刷入压缩镜像（推荐，无需先解压）
+zstdcat output/orangepi5-plus-sd-YYYYMMDD.img.zst | sudo dd of=/dev/sdX bs=4M status=progress
+
+# 方法 2：先解压再刷入
+zstd -d output/orangepi5-plus-sd-YYYYMMDD.img.zst -o /tmp/orangepi5-plus.img
+sudo dd if=/tmp/orangepi5-plus.img of=/dev/sdX bs=4M status=progress conv=fsync
+rm /tmp/orangepi5-plus.img
+
+# 方法 3：刷入原始镜像
+sudo dd if=output/orangepi5-plus-sd-YYYYMMDD.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 ## 首次启动
@@ -96,6 +105,15 @@ sudo dd if=output/orangepi5-plus-archlinux-20250525.img of=/dev/sdX \
 3. 上电启动
 4. 默认凭据：**root / root**
 5. （可选）连接 HDMI 显示器也会显示登录界面
+
+### 首次启动自动操作
+
+首次启动时会自动执行以下操作（仅执行一次）：
+
+1. **展开根分区**：自动扩展根分区以填满整个 SD 卡
+2. **解压内核源码树**：将 `/usr/src/linux-*.tar.zst` 解压到 `/usr/src/linux-*/`
+   - 用于后续编译内核模块
+   - 解压后自动删除压缩包节省空间
 
 ### 串口连接参数
 
