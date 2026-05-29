@@ -49,8 +49,7 @@ sudo apt install build-essential git wget parted dosfstools mtools bsdtar \
 
 构建完成后输出：
 ```
-output/orangepi5-plus-sd-YYYYMMDD.img       # 原始镜像（8GB）
-output/orangepi5-plus-sd-YYYYMMDD.img.zst   # 压缩镜像（~2-3GB，用于分发）
+output/orangepi5-plus-sd-YYYYMMDD.img.zst   # 压缩镜像（~2-3GB）
 output/linux-op5p-*.pkg.tar.zst             # 内核安装包
 ```
 
@@ -86,16 +85,11 @@ output/linux-op5p-*.pkg.tar.zst             # 内核安装包
 # 确认 SD 卡设备
 lsblk
 
-# 方法 1：直接刷入压缩镜像（推荐，无需先解压）
+# 直接刷入压缩镜像（无需先解压）
 zstdcat output/orangepi5-plus-sd-YYYYMMDD.img.zst | sudo dd of=/dev/sdX bs=4M status=progress
 
-# 方法 2：先解压再刷入
-zstd -d output/orangepi5-plus-sd-YYYYMMDD.img.zst -o /tmp/orangepi5-plus.img
-sudo dd if=/tmp/orangepi5-plus.img of=/dev/sdX bs=4M status=progress conv=fsync
-rm /tmp/orangepi5-plus.img
-
-# 方法 3：刷入原始镜像
-sudo dd if=output/orangepi5-plus-sd-YYYYMMDD.img of=/dev/sdX bs=4M status=progress conv=fsync
+# 或者用 zstd -d --stdout
+zstd -d output/orangepi5-plus-sd-YYYYMMDD.img.zst --stdout | sudo dd of=/dev/sdX bs=4M status=progress
 ```
 
 ## 首次启动

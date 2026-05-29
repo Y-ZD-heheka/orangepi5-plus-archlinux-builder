@@ -1062,30 +1062,29 @@ GF
 Orange Pi 5 Plus ${TARGET^^} Image
 Built: $(date)
 Kernel: ${KERNEL_VERSION:-unknown}
-Image: $(basename "${image_file}")
+Image: $(basename "${compressed_file}")
 Target: ${TARGET}
 Root PARTUUID (kernel): ${part_uuid}
 Root UUID (fstab): ${root_uuid}
 Root filesystem: ${ROOT_FSTYPE}
-Compressed: $(basename "${image_file}").zst
 EOF
 
     # Compress image with zstd for distribution
     info "Compressing image with zstd (this may take a few minutes)..."
     local compressed_file="${image_file}.zst"
     rm -f "$compressed_file"
-    zstd -T0 -19 "$image_file" -o "$compressed_file" 2>&1 | tail -3
+    zstd -T0 -19 --rm "$image_file" -o "$compressed_file" 2>&1 | tail -3
     local compressed_size
     compressed_size=$(du -sh "$compressed_file" | cut -f1)
     info "Compressed image: ${compressed_size}"
     echo ""
     echo "  Compressed: ${compressed_file}"
-    echo "  Size: ${compressed_size} (raw: $((img_size / 1024 / 1024)) MB)"
+    echo "  Size: ${compressed_size}"
     echo ""
     echo "  To flash:"
-    echo "    zstd -d ${compressed_file} -o /dev/sdX"
-    echo "    # or"
     echo "    zstdcat ${compressed_file} | dd of=/dev/sdX bs=4M status=progress"
+    echo "    # or"
+    echo "    zstd -d ${compressed_file} --stdout | dd of=/dev/sdX bs=4M status=progress"
     echo ""
 }
 

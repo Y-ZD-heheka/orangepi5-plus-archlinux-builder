@@ -178,9 +178,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: orangepi5-plus-sd-image
-          path: |
-            output/orangepi5-plus-sd-*.img.zst
-            output/orangepi5-plus-sd-*.img
+          path: output/orangepi5-plus-sd-*.img.zst
           retention-days: 30
           compression-level: 0
 
@@ -189,9 +187,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: orangepi5-plus-nvme-image
-          path: |
-            output/orangepi5-plus-nvme-*.img.zst
-            output/orangepi5-plus-nvme-*.img
+          path: output/orangepi5-plus-nvme-*.img.zst
           retention-days: 30
           compression-level: 0
 
@@ -215,7 +211,7 @@ jobs:
         run: |
           cd output
           shopt -s nullglob
-          for f in *.img.zst *.img *.pkg.tar.zst; do
+          for f in *.img.zst *.pkg.tar.zst; do
             sha256sum "$f" >> checksums.txt
           done
           if [[ -f checksums.txt ]]; then
@@ -267,20 +263,19 @@ jobs:
             - Arch Linux ARM base system
 
             ### Download
-            - `orangepi5-plus-sd-*.img` - SD card image (U-Boot included)
-            - `orangepi5-plus-nvme-*.img` - NVMe disk image (boot from SPI flash)
+            - `orangepi5-plus-sd-*.img.zst` - Compressed SD card image (U-Boot included)
+            - `orangepi5-plus-nvme-*.img.zst` - Compressed NVMe disk image (boot from SPI flash)
             - `linux-op5p-*.pkg.tar.zst` - Kernel packages for existing installations
 
             ### Flash Instructions
             ```bash
-            # SD card
-            dd if=orangepi5-plus-sd-YYYYMMDD.img of=/dev/sdX bs=4M status=progress
+            # SD card (no need to decompress first)
+            zstdcat orangepi5-plus-sd-YYYYMMDD.img.zst | dd of=/dev/sdX bs=4M status=progress
 
             # Default login: root / root (serial console ttyS2, 1500000 baud)
             ```
           files: |
             artifacts/**/*.img.zst
-            artifacts/**/*.img
             artifacts/**/*.pkg.tar.zst
             artifacts/**/checksums.txt
           draft: false
