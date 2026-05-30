@@ -117,6 +117,9 @@ Options:
   --packages-only     Build kernel and packages (stages 0-5+8, skip rootfs/image)
   --force-latest      Force fetch latest U-Boot and kernel sources (ignore cache)
   --kernel-version V  Use specific kernel version (e.g., 7.1-rc5, v7.0.10)
+  --kernel-lts        Use latest LTS kernel (e.g., 6.12.x, 6.6.x)
+  --kernel-rc         Use latest RC kernel (e.g., 7.1-rc5)
+  --kernel-stable     Use latest stable kernel (default)
   --help, -h          Show this help message
 
 Output:
@@ -428,16 +431,33 @@ stage_05_kernel() {
     fi
 
     local kernel_tag
-    # Use specific kernel version if set, otherwise use latest stable
+    # Use specific kernel version if set, otherwise use kernel mode
     if [[ -n "${KERNEL_VERSION:-}" ]]; then
         kernel_tag="$KERNEL_VERSION"
         # Remove 'v' prefix if present
         kernel_tag="${kernel_tag#v}"
     else
-        # Match both stable (7.0.10) and RC (7.1-rc5) versions
-        kernel_tag=$(git ls-remote --tags --refs "$LINUX_REPO" 2>/dev/null \
-            | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+(\.[0-9]+)?(-rc[0-9]+)?$' \
-            | sort -V | tail -1)
+        case "$KERNEL_MODE" in
+            lts)
+                # Find latest LTS kernel (even major.minor versions)
+                kernel_tag=$(git ls-remote --tags --refs "$LINUX_REPO" 2>/dev/null \
+                    | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+\.[0-9]+$' \
+                    | awk -F. '{if ($2 % 2 == 0) print}' \
+                    | sort -V | tail -1)
+                ;;
+            rc)
+                # Find latest RC kernel
+                kernel_tag=$(git ls-remote --tags --refs "$LINUX_REPO" 2>/dev/null \
+                    | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+-rc[0-9]+$' \
+                    | sort -V | tail -1)
+                ;;
+            stable|*)
+                # Find latest stable kernel
+                kernel_tag=$(git ls-remote --tags --refs "$LINUX_REPO" 2>/dev/null \
+                    | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+\.[0-9]+$' \
+                    | sort -V | tail -1)
+                ;;
+        esac
         kernel_tag="${kernel_tag#refs/tags/}"
         kernel_tag="${kernel_tag:-master}"
     fi
@@ -1333,6 +1353,7 @@ START_STAGE=0
 PACKAGES_ONLY=0
 FORCE_LATEST=0
 KERNEL_VERSION=""
+KERNEL_MODE="stable"  # stable, lts, rc
 TARGET="${TARGET:-sd}"
 
 while [[ $# -gt 0 ]]; do
@@ -1345,6 +1366,9 @@ while [[ $# -gt 0 ]]; do
         --packages-only) PACKAGES_ONLY=1; shift ;;
         --force-latest) FORCE_LATEST=1; shift ;;
         --kernel-version) KERNEL_VERSION="$2"; shift 2 ;;
+        --kernel-lts) KERNEL_MODE="lts"; shift ;;
+        --kernel-rc) KERNEL_MODE="rc"; shift ;;
+        --kernel-stable) KERNEL_MODE="stable"; shift ;;
         *) error "Unknown: $1 (use --help)" ;;
     esac
 done
