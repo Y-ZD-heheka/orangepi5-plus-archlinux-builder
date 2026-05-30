@@ -461,8 +461,13 @@ stage_05_kernel() {
             GIT_SSL_NO_VERIFY=1 git clone --depth 1 --single-branch \
                 "$LINUX_REPO" "${SOURCES_DIR}/linux"
         else
-            GIT_SSL_NO_VERIFY=1 git clone --depth 1 --single-branch --branch "$kernel_tag" \
+            # For tags, use git clone without --branch, then checkout the tag
+            GIT_SSL_NO_VERIFY=1 git clone --depth 1 \
                 "$LINUX_REPO" "${SOURCES_DIR}/linux"
+            git -C "${SOURCES_DIR}/linux" fetch --depth 1 origin tag "v${kernel_tag}" 2>/dev/null || \
+                git -C "${SOURCES_DIR}/linux" fetch --depth 1 origin tag "$kernel_tag" 2>/dev/null || \
+                error "Failed to fetch kernel tag: ${kernel_tag}"
+            git -C "${SOURCES_DIR}/linux" checkout FETCH_HEAD
         fi
     fi
 
