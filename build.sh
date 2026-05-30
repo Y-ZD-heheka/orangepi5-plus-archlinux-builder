@@ -709,12 +709,12 @@ stage_06_rootfs() {
             modules_install 2>&1 | tail -5
     fi
 
-    if [[ -d "$DTBS_DIR" ]]; then
+    if [[ -d "${DTBS_DIR:-}" ]]; then
         ensure_dir "${rootfs_dir}/boot/dtbs"
         cp -r "$DTBS_DIR" "${rootfs_dir}/boot/dtbs/"
     fi
 
-    [[ -f "$KERNEL_IMAGE" ]] && cp "$KERNEL_IMAGE" "${rootfs_dir}/boot/"
+    [[ -f "${KERNEL_IMAGE:-}" ]] && cp "$KERNEL_IMAGE" "${rootfs_dir}/boot/"
 
     echo "orangepi5-plus" > "${rootfs_dir}/etc/hostname"
 
@@ -960,9 +960,9 @@ stage_07_image() {
     info "Creating FAT32 boot partition..."
     rm -f "$boot_img"
     mkfs.vfat -C "$boot_img" $((BOOT_SIZE_MB * 1024)) -n ALARMBOOT 2>&1 | tail -1
-    [[ -f "$KERNEL_IMAGE" ]] && mcopy -i "$boot_img" "$KERNEL_IMAGE" ::/Image
+    [[ -f "${KERNEL_IMAGE:-}" ]] && mcopy -i "$boot_img" "$KERNEL_IMAGE" ::/Image
     mmd -i "$boot_img" /extlinux
-    if [[ -d "$DTBS_DIR" ]]; then
+    if [[ -d "${DTBS_DIR:-}" ]]; then
         mmd -i "$boot_img" /dtbs 2>/dev/null || true
         mcopy -i "$boot_img" "$DTBS_DIR"/*.dtb ::/dtbs/ 2>/dev/null || true
     fi
