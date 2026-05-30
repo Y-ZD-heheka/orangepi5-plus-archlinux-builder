@@ -116,12 +116,13 @@ Options:
   --no-kernel         Skip kernel build (for testing bootloader/rootfs only)
   --packages-only     Build kernel and packages (stages 0-5+8, skip rootfs/image)
   --force-latest      Force fetch latest U-Boot and kernel sources (ignore cache)
+  --kernel-version V  Use specific kernel version (e.g., 7.1-rc5, v7.0.10)
   --help, -h          Show this help message
 
 Output:
-  sd:   output/orangepi5-plus-sd-YYYYMMDD.img     — Flashable SD card image (U-Boot included)
-  nvme: output/orangepi5-plus-nvme-YYYYMMDD.img   — NVMe disk image (boot from SPI flash)
-  both: output/linux-op5p-*.pkg.tar.zst            — Arch Linux kernel packages (if enabled)
+  sd:   output/orangepi5-plus-sd-YYYYMMDD.img.zst   — Compressed SD card image
+  nvme: output/orangepi5-plus-nvme-YYYYMMDD.img.zst  — Compressed NVMe image
+  both: output/linux-op5p-*.pkg.tar.zst              — Arch Linux kernel packages
 EOF
     exit 0
 }
@@ -427,11 +428,19 @@ stage_05_kernel() {
     fi
 
     local kernel_tag
-    kernel_tag=$(git ls-remote --tags --refs "$LINUX_REPO" 2>/dev/null \
-        | grep -oP 'refs/tags/v\d+\.\d+(\.\d+)?$' \
-        | sort -V | tail -1)
-    kernel_tag="${kernel_tag#refs/tags/}"
-    kernel_tag="${kernel_tag:-master}"
+    # Use specific kernel version if set, otherwise use latest stable
+    if [[ -n "${KERNEL_VERSION:-}" ]]; then
+        kernel_tag="$KERNEL_VERSION"
+        # Remove 'v' prefix if present
+        kernel_tag="${kernel_tag#v}"
+    else
+        # Match both stable (7.0.10) and RC (7.1-rc5) versions
+        kernel_tag=$(git ls-remote --tags --refs "$LINUX_REPO" 2>/dev/null \
+            | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+(\.[0-9]+)?(-rc[0-9]+)?$' \
+            | sort -V | tail -1)
+        kernel_tag="${kernel_tag#refs/tags/}"
+        kernel_tag="${kernel_tag:-master}"
+    fi
 
     if [[ -d "${SOURCES_DIR}/linux" ]]; then
         local current_tag; current_tag=$(git -C "${SOURCES_DIR}/linux" describe --tags --exact-match 2>/dev/null || true)
@@ -1318,6 +1327,7 @@ SKIP_KERNEL=0
 START_STAGE=0
 PACKAGES_ONLY=0
 FORCE_LATEST=0
+KERNEL_VERSION=""
 TARGET="${TARGET:-sd}"
 
 while [[ $# -gt 0 ]]; do
@@ -1329,6 +1339,7 @@ while [[ $# -gt 0 ]]; do
         --stage) START_STAGE="$2"; shift 2 ;;
         --packages-only) PACKAGES_ONLY=1; shift ;;
         --force-latest) FORCE_LATEST=1; shift ;;
+        --kernel-version) KERNEL_VERSION="$2"; shift 2 ;;
         *) error "Unknown: $1 (use --help)" ;;
     esac
 done
