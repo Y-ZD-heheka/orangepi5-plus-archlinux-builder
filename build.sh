@@ -467,6 +467,11 @@ stage_04_uboot() {
     [[ -f "${uboot_src}/configs/${UBOOT_DEFCONFIG}" ]] || \
         error "Defconfig not found: ${UBOOT_DEFCONFIG}"
 
+    # GitHub Actions runner has incompatible system libfdt — build U-Boot's bundled version
+    if pip3 install pylibfdt==1.6.1 2>/dev/null; then
+        sub "Installed compatible pylibfdt for binman"
+    fi
+
     # U-Boot ARM64 build uses ARCH=arm (the arch/arm/ tree supports both
     # 32-bit ARM and AArch64 via cpu/armv8). ARCH=arm64 is NOT a valid
     # U-Boot Kconfig target; it would require unavailable arch/arm64/ stubs.
