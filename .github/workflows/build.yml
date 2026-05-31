@@ -19,6 +19,7 @@ on:
         options:
           - sd
           - nvme
+          - emmc
           - both
       clean_cache:
         description: 'Clean all cache before build'
@@ -191,6 +192,15 @@ jobs:
           retention-days: 30
           compression-level: 0
 
+      - name: Upload eMMC image
+        if: ${{ env.TARGET == 'emmc' || env.TARGET == 'both' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: orangepi5-plus-emmc-image
+          path: output/orangepi5-plus-emmc-*.img.zst
+          retention-days: 30
+          compression-level: 0
+
       - name: Upload kernel packages
         uses: actions/upload-artifact@v4
         with:
@@ -231,11 +241,20 @@ jobs:
   release:
     needs: [ check-updates, build ]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: success() && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
     permissions:
       contents: write
 
     steps:
+      - name: Determine release tag
+        id: tag
+        run: |
+          if [[ "${{ github.ref }}" =~ ^refs/tags/v ]]; then
+            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=v$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
+          fi
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -245,11 +264,11 @@ jobs:
         run: |
           find artifacts -type f | sort
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2
+      - name: Create or Update Release
+        uses: ncipollo/release-action@v1
         with:
-          tag_name: ${{ github.ref_name }}
-          name: "Orange Pi 5 Plus Image ${{ github.ref_name }}"
+          tag: ${{ steps.tag.outputs.tag }}
+          name: "Orange Pi 5 Plus Image ${{ steps.tag.outputs.tag }}"
           body: |
             ## Orange Pi 5 Plus Arch Linux ARM Image
 
@@ -265,6 +284,7 @@ jobs:
             ### Download
             - `orangepi5-plus-sd-*.img.zst` - Compressed SD card image (U-Boot included)
             - `orangepi5-plus-nvme-*.img.zst` - Compressed NVMe disk image (boot from SPI flash)
+            - `orangepi5-plus-emmc-*.img.zst` - Compressed eMMC module image (U-Boot included)
             - `linux-op5p-*.pkg.tar.zst` - Kernel packages for existing installations
 
             ### Flash Instructions
@@ -274,22 +294,26 @@ jobs:
 
             # Default login: root / root (serial console ttyS2, 1500000 baud)
             ```
-          files: |
+          artifacts: |
             artifacts/**/*.img.zst
             artifacts/**/*.pkg.tar.zst
             artifacts/**/checksums.txt
+          allowUpdates: true
+          makeLatest: true
           draft: false
           prerelease: false
 
   notify:
-    needs: [ build, release ]
+    needs: [ check-updates, build, release ]
     runs-on: ubuntu-latest
     if: always()
 
     steps:
       - name: Build status
         run: |
-          if [[ "${{ needs.build.result }}" == "success" ]]; then
+          if [[ "${{ needs.check-updates.outputs.should_build }}" != "true" ]]; then
+            echo "⏭ No updates, build skipped"
+          elif [[ "${{ needs.build.result }}" == "success" ]]; then
             echo "✅ Build succeeded"
           else
             echo "❌ Build failed"
