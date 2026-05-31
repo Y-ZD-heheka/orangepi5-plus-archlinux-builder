@@ -1,331 +1,77 @@
-name: Build Orange Pi 5 Plus Image
+name: Build Images
 
 on:
   push:
-    branches: [ master, main ]
-    tags: [ 'v*' ]
-  pull_request:
-    branches: [ master, main ]
-  schedule:
-    # 每天 UTC 02:00 检查最新源码并构建（北京时间 10:00）
-    - cron: '0 2 * * *'
+    tags:
+      - 'v*'
   workflow_dispatch:
-    inputs:
-      target:
-        description: 'Build target'
-        required: true
-        default: 'sd'
-        type: choice
-        options:
-          - sd
-          - nvme
-          - emmc
-          - both
-      clean_cache:
-        description: 'Clean all cache before build'
-        required: false
-        default: false
-        type: boolean
-      force_rebuild:
-        description: 'Force rebuild even if sources unchanged'
-        required: false
-        default: false
-        type: boolean
-
-env:
-  TARGET: ${{ github.event.inputs.target || 'sd' }}
-  BUILD_JOBS: 4
 
 jobs:
-  check-updates:
-    runs-on: ubuntu-latest
-    outputs:
-      should_build: ${{ steps.check.outputs.should_build }}
-      kernel_version: ${{ steps.check.outputs.kernel_version }}
-      uboot_version: ${{ steps.check.outputs.uboot_version }}
-
-    steps:
-      - name: Check for latest versions
-        id: check
-        run: |
-          echo "=== Checking latest kernel version ==="
-          KERNEL_TAG=$(git ls-remote --tags --refs https://mirrors.ustc.edu.cn/linux.git 2>/dev/null \
-            | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-            | sort -V | tail -1 || echo "unknown")
-          echo "Latest kernel: v${KERNEL_TAG}"
-
-          echo "=== Checking latest U-Boot version ==="
-          UBOOT_TAG=$(git ls-remote --tags --refs https://gitee.com/u-boot/u-boot.git 2>/dev/null \
-            | grep -oP 'refs/tags/v\K[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-            | sort -V | tail -1 || echo "unknown")
-          echo "Latest U-Boot: v${UBOOT_TAG}"
-
-          # 检查是否需要构建（定时触发时检查，push/PR 总是构建）
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            # 获取上次构建的版本
-            PREV_KERNEL=$(gh api repos/${{ github.repository }}/releases/latest \
-              --jq '.tag_name' 2>/dev/null | grep -oP 'kernel-v\K[0-9.]+' || echo "")
-            PREV_UBOOT=$(gh api repos/${{ github.repository }}/releases/latest \
-              --jq '.tag_name' 2>/dev/null | grep -oP 'uboot-v\K[0-9.]+' || echo "")
-
-            if [[ "$PREV_KERNEL" == "$KERNEL_TAG" && "$PREV_UBOOT" == "$UBOOT_TAG" ]]; then
-              echo "No updates found, skipping build"
-              echo "should_build=false" >> $GITHUB_OUTPUT
-            else echo "Updates detected, will build"
-              echo "should_build=true" >> $GITHUB_OUTPUT
-            fi
-          else
-            echo "should_build=true" >> $GITHUB_OUTPUT
-          fi
-
-          echo "kernel_version=v${KERNEL_TAG}" >> $GITHUB_OUTPUT
-          echo "uboot_version=v${UBOOT_TAG}" >> $GITHUB_OUTPUT
-
   build:
-    needs: check-updates
-    if: needs.check-updates.outputs.should_build == 'true' || github.event.inputs.force_rebuild == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 180
+    runs-on: [self-hosted, linux, x64]
+    permissions:
+      contents: write
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Free disk space
+      - name: Install dependencies
         run: |
-          echo "=== Before cleanup ==="
-          df -h /
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo apt-get clean
-          echo "=== After cleanup ==="
-          df -h /
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            libguestfs-tools xfsprogs dosfstools mtools bc flex bison ccache
 
-      - name: Install system dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git wget parted dosfstools mtools libarchive-tools \
-            bc flex bison xfsprogs libguestfs-tools libguestfs-dev \
-            qemu-system-arm qemu-utils libvirt-daemon-system \
-            pkg-config libssl-dev rsync pigz zstd ccache \
-            gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
-            libgnutls28-dev uuid-dev \
-            device-tree-compiler python3-libfdt python3-setuptools python3-pyelftools
-          sudo systemctl start libvirtd || true
-          sudo usermod -a -G libvirt $USER || true
-          echo "=== System cross-compiler ==="
-          aarch64-linux-gnu-gcc --version | head -1
+      - name: Build SD image
+        run: ./build.sh --target sd 2>&1 | tee build-sd.log
 
-      - name: Cache toolchain
-        id: cache-toolchain
-        uses: actions/cache@v4
-        with:
-          path: build/toolchain
-          key: toolchain-${{ runner.os }}-15.2.rel1
-          restore-keys: |
-            toolchain-${{ runner.os }}-
+      - name: Build eMMC image
+        run: ./build.sh --target emmc --stage 0 2>&1 | tee build-emmc.log
 
-      - name: Cache rkbin
-        id: cache-rkbin
-        uses: actions/cache@v4
-        with:
-          path: build/sources/rkbin
-          key: rkbin-${{ runner.os }}-${{ hashFiles('build.sh') }}
-          restore-keys: |
-            rkbin-${{ runner.os }}-
+      - name: Build NVMe image
+        run: ./build.sh --target nvme --stage 0 2>&1 | tee build-nvme.log
 
-      - name: Cache rootfs tarball
-        id: cache-rootfs
-        uses: actions/cache@v4
-        with:
-          path: cache/ArchLinuxARM-aarch64-latest.tar.gz
-          key: rootfs-${{ runner.os }}-latest
-          restore-keys: |
-            rootfs-${{ runner.os }}-
-
-      - name: Cache ccache
-        id: cache-ccache
-        uses: actions/cache@v4
-        with:
-          path: cache/ccache
-          key: ccache-${{ runner.os }}-kernel-${{ github.run_id }}
-          restore-keys: |
-            ccache-${{ runner.os }}-kernel-
-            ccache-${{ runner.os }}-
-
-      - name: Clean cache (if requested)
-        if: ${{ github.event.inputs.clean_cache == 'true' }}
-        run: |
-          echo "Cleaning all cache..."
-          rm -rf build/ cache/ output/
-
-      - name: Build image
-        run: |
-          chmod +x build.sh
-          # 定时触发时强制拉取最新源码
-          FORCE_LATEST=""
-          if [[ "${{ github.event_name }}" == "schedule" ]]; then
-            FORCE_LATEST="--force-latest"
-          fi
-          if [[ "$TARGET" == "both" ]]; then
-            ./build.sh --target sd $FORCE_LATEST 2>&1 | tee build-sd.log
-            ./build.sh --target nvme $FORCE_LATEST 2>&1 | tee build-nvme.log
-            ./build.sh --target emmc $FORCE_LATEST 2>&1 | tee build-emmc.log
-          else
-            ./build.sh --target "$TARGET" $FORCE_LATEST 2>&1 | tee build.log
-          fi
-
-      - name: Extract version info
-        id: version
-        run: |
-          if [[ -f output/image-info.txt ]]; then
-            KERNEL_VER=$(grep "Kernel:" output/image-info.txt | awk '{print $2}')
-            IMAGE_NAME=$(grep "Image:" output/image-info.txt | awk '{print $2}')
-            echo "kernel_version=${KERNEL_VER}" >> $GITHUB_OUTPUT
-            echo "image_name=${IMAGE_NAME}" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Upload SD image
-        if: ${{ env.TARGET == 'sd' || env.TARGET == 'both' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: orangepi5-plus-sd-image
-          path: output/orangepi5-plus-sd-*.img.zst
-          retention-days: 30
-          compression-level: 0
-
-      - name: Upload NVMe image
-        if: ${{ env.TARGET == 'nvme' || env.TARGET == 'both' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: orangepi5-plus-nvme-image
-          path: output/orangepi5-plus-nvme-*.img.zst
-          retention-days: 30
-          compression-level: 0
-
-      - name: Upload eMMC image
-        if: ${{ env.TARGET == 'emmc' || env.TARGET == 'both' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: orangepi5-plus-emmc-image
-          path: output/orangepi5-plus-emmc-*.img.zst
-          retention-days: 30
-          compression-level: 0
-
-      - name: Upload kernel packages
-        uses: actions/upload-artifact@v4
-        with:
-          name: kernel-packages
-          path: |
-            output/linux-op5p-*.pkg.tar.zst
-          retention-days: 30
-
-      - name: Upload build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: build-logs
-          path: '*.log'
-          retention-days: 7
+      - name: Check outputs
+        run: ls -lh output/
 
       - name: Generate checksums
         run: |
           cd output
           shopt -s nullglob
-          for f in *.img.zst *.pkg.tar.zst; do
-            sha256sum "$f" >> checksums.txt
+          for f in *.img.zst *.pkg.tar.zst image-info.txt; do
+            [ -f "$f" ] && sha256sum "$f" >> checksums.txt
           done
-          if [[ -f checksums.txt ]]; then
-            cat checksums.txt
-          else
-            echo "No artifacts to checksum"
-          fi
+          cat checksums.txt
 
-      - name: Upload checksums
-        if: hashFiles('output/checksums.txt') != ''
-        uses: actions/upload-artifact@v4
-        with:
-          name: checksums
-          path: output/checksums.txt
-          retention-days: 30
-
-  release:
-    needs: [ check-updates, build ]
-    runs-on: ubuntu-latest
-    if: success() && (github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/v'))
-    permissions:
-      contents: write
-
-    steps:
-      - name: Determine release tag
-        id: tag
-        run: |
-          if [[ "${{ github.ref }}" =~ ^refs/tags/v ]]; then
-            echo "tag=${{ github.ref_name }}" >> $GITHUB_OUTPUT
-          else
-            echo "tag=v$(date +'%Y%m%d')" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Download artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: List artifacts
-        run: |
-          find artifacts -type f | sort
-
-      - name: Create or Update Release
+      - name: Create release
         uses: ncipollo/release-action@v1
         with:
-          tag: ${{ steps.tag.outputs.tag }}
-          name: "Orange Pi 5 Plus Image ${{ steps.tag.outputs.tag }}"
+          tag: ${{ github.ref_name }}
+          name: "Orange Pi 5 Plus Image ${{ github.ref_name }}"
           body: |
             ## Orange Pi 5 Plus Arch Linux ARM Image
 
-            **Kernel**: ${{ needs.check-updates.outputs.kernel_version }}
-            **U-Boot**: ${{ needs.check-updates.outputs.uboot_version }}
-            **Build Date**: ${{ github.event.head_commit.timestamp }}
+            ### 构建产物
+            - `orangepi5-plus-sd-*.img.zst` — SD 卡镜像（U-Boot 写入镜像头）
+            - `orangepi5-plus-emmc-*.img.zst` — eMMC 模块镜像（U-Boot 写入镜像头）
+            - `orangepi5-plus-nvme-*.img.zst` — NVMe 磁盘镜像（U-Boot 预期在 SPI Flash）
+            - `linux-op5p-*.pkg.tar.zst` — 内核与内核头软件包，适用于已有系统
 
-            ### Included Software
-            - Linux Kernel ${{ needs.check-updates.outputs.kernel_version }} (mainline)
-            - U-Boot ${{ needs.check-updates.outputs.uboot_version }} (mainline)
-            - Arch Linux ARM base system
-
-            ### Download
-            - `orangepi5-plus-sd-*.img.zst` - Compressed SD card image (U-Boot included)
-            - `orangepi5-plus-nvme-*.img.zst` - Compressed NVMe disk image (boot from SPI flash)
-            - `orangepi5-plus-emmc-*.img.zst` - Compressed eMMC module image (U-Boot included)
-            - `linux-op5p-*.pkg.tar.zst` - Kernel packages for existing installations
-
-            ### Flash Instructions
+            ### 刷写
             ```bash
-            # SD card (no need to decompress first)
-            zstdcat orangepi5-plus-sd-YYYYMMDD.img.zst | dd of=/dev/sdX bs=4M status=progress
+            # SD / eMMC（无需解压）
+            zstdcat orangepi5-plus-*-YYYYMMDD.img.zst | dd of=/dev/sdX bs=4M status=progress
 
-            # Default login: root / root (serial console ttyS2, 1500000 baud)
+            # NVMe（需先将 U-Boot 写入 SPI Flash）
+            # 见 docs/spi-nvme-boot.md
             ```
+
+            默认 root 登录（串口 ttyS2, 1500000 baud）。
           artifacts: |
-            artifacts/**/*.img.zst
-            artifacts/**/*.pkg.tar.zst
-            artifacts/**/checksums.txt
+            output/*.img.zst
+            output/*.pkg.tar.zst
+            output/image-info.txt
+            output/checksums.txt
           allowUpdates: true
           makeLatest: true
           draft: false
           prerelease: false
-
-  notify:
-    needs: [ check-updates, build, release ]
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Build status
-        run: |
-          if [[ "${{ needs.check-updates.outputs.should_build }}" != "true" ]]; then
-            echo "⏭ No updates, build skipped"
-          elif [[ "${{ needs.build.result }}" == "success" ]]; then
-            echo "✅ Build succeeded"
-          else
-            echo "❌ Build failed"
-          fi
