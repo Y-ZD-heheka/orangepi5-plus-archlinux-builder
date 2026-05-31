@@ -38,6 +38,10 @@ jobs:
           restore-keys: |
             ccache-${{ runner.os }}-
 
+      - name: Fix libfdt for U-Boot binman
+        run: |
+          sudo apt-get remove -y python3-libfdt device-tree-compiler 2>/dev/null || true
+
       - name: Build ${{ matrix.target }} image
         run: ./build.sh --target ${{ matrix.target }}
         env:
