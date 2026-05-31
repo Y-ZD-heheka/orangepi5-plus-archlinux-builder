@@ -666,11 +666,14 @@ stage_05_kernel() {
 
     # Enable ccache for kernel compilation if available
     if command -v ccache &>/dev/null; then
-        local ccache_dir="${SCRIPT_DIR}/cache/ccache"
+        local ccache_dir="${CCACHE_DIR:-${SCRIPT_DIR}/cache/ccache}"
+        if [[ "${CCACHE_IN_MEM:-0}" -eq 1 ]]; then
+            ccache_dir="/dev/shm/ccache"
+        fi
         mkdir -p "$ccache_dir"
         export CCACHE_DIR="$ccache_dir"
-        ccache -M 2G &>/dev/null || true
-        info "ccache enabled (${ccache_dir}, max 2G)"
+        ccache -M ${CCACHE_MAX_SIZE:-2G} &>/dev/null || true
+        info "ccache enabled (${ccache_dir}, max ${CCACHE_MAX_SIZE:-2G})"
     fi
 
     make -C "$kernel_src" ARCH=arm64 \
