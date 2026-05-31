@@ -422,10 +422,17 @@ stage_05_kernel() {
     # ----------------------------------------------------------------------
     # Memory-adaptive caching: automatically pick tmpfs when enough RAM
     # ----------------------------------------------------------------------
-    # /dev/shm size ≈ 50% of physical RAM
-    #   < 2GB  → ccache on disk, build output on disk     (≤ 4GB RAM)
-    #   ≥ 2GB  → ccache on tmpfs, build output on disk     (≥ 8GB RAM, safe)
-    #   ≥ 15GB → ccache + build output on tmpfs            (≥ 32GB RAM, comfy)
+    # /dev/shm ≈ 50% of physical RAM.  Actual thresholds:
+    #   /dev/shm           RAM         tier  caching strategy
+    #   ─────────────────────────────────────────────────────
+    #   < 2GB              < 4GB       3     all on disk (min viable)
+    #   ≥ 2GB              ≥ 4GB       2     ccache in tmpfs
+    #   ≥ 15GB             ≥ 30GB      1     ccache + build in tmpfs
+    #
+    # NOTE: kernel compilation + guestfish needs ~6-8GB RAM total.
+    #   Tier 3 (<4GB) will work but may swap heavily — consider -j 2.
+    #   Tier 2 (4-30GB) is comfortable for most builds.
+    #   Tier 1 (≥30GB) avoids all disk I/O for kernel build.
     # ----------------------------------------------------------------------
     if [[ -d /dev/shm ]]; then
         local shm_free_kb

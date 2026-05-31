@@ -72,5 +72,8 @@ op5p_diy/
 - **U-Boot ARCH=arm**: U-Boot uses `ARCH=arm` (not `arm64`) for AArch64 — its `arch/arm/cpu/armv8/` handles 64-bit
 - **guestfish dependency**: XFS root filesystem requires `libguestfs` for tar-in (no loop devices needed)
 - **Build time**: Stage 5 (kernel) is 30-60 min dominant; others are 1-10 min each
+- **ccache**: Auto-detected, 3-tier memory strategy based on /dev/shm free space:
+  - T3 (<2GB): all on disk; T2 (≥2GB): ccache in tmpfs; T1 (≥15GB): build output also in tmpfs
+- **Memory**: Kernel build + guestfish needs ~6-8GB RAM minimum; 16GB recommended; 32GB+ for zero-disk-write (tier 1)
 - **NVMe boot**: BootROM cannot boot NVMe directly — U-Boot on SPI flash loads kernel from NVMe
 - **Serial console**: ttyS2 at 1500000 baud, autologin root
