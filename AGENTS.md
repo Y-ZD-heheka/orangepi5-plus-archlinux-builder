@@ -33,6 +33,7 @@ op5p_diy/
 | U-Boot build | `build.sh#L251-L342` (stage_04_uboot) | Resolves latest tag, builds with BL31+ROCKCHIP_TPL |
 | Image assembly | `build.sh#L610-L779` (stage_07_image) | guestfish for GPT/XFS, dd for U-Boot |
 | SPI + NVMe boot | `docs/spi-nvme-boot.md` | Full guide for SPI flash + NVMe setup |
+| SPI + NVMe boot | `docs/spi-nvme-boot.md` | Full guide for SPI flash + NVMe setup |
 | Kernel tuning | `kernel-optimization-guide.md` | P0/P1 optimization recommendations |
 | Rootfs config | `build.sh#L474-L605` (stage_06_rootfs) | systemd units, fstab, kernel modules |
 | Toolchain | `build.sh#L140-L188` (stage_01_toolchain) | System GCC detection → ARM download fallback |
