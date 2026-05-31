@@ -663,7 +663,19 @@ stage_05_kernel() {
         O="$kernel_build" olddefconfig 2>/dev/null
 
     info "Building kernel Image + dtbs + modules (this takes ~30-60 minutes)..."
-    make -C "$kernel_src" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
+
+    # Enable ccache for kernel compilation if available
+    if command -v ccache &>/dev/null; then
+        local ccache_dir="${SCRIPT_DIR}/cache/ccache"
+        mkdir -p "$ccache_dir"
+        export CCACHE_DIR="$ccache_dir"
+        ccache -M 2G &>/dev/null || true
+        info "ccache enabled (${ccache_dir}, max 2G)"
+    fi
+
+    make -C "$kernel_src" ARCH=arm64 \
+        CC="ccache ${CROSS_COMPILE}gcc" \
+        CROSS_COMPILE="$CROSS_COMPILE" \
         O="$kernel_build" -j "$BUILD_JOBS" Image dtbs modules 2>&1 | tail -20
 
     export KERNEL_VERSION

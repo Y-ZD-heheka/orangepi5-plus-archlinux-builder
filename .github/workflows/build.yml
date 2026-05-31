@@ -107,7 +107,7 @@ jobs:
             build-essential git wget parted dosfstools mtools libarchive-tools \
             bc flex bison xfsprogs libguestfs-tools libguestfs-dev \
             qemu-system-arm qemu-utils libvirt-daemon-system \
-            pkg-config libssl-dev rsync pigz zstd \
+            pkg-config libssl-dev rsync pigz zstd ccache \
             gcc-aarch64-linux-gnu g++-aarch64-linux-gnu \
             libgnutls28-dev uuid-dev \
             device-tree-compiler python3-libfdt python3-setuptools python3-pyelftools
@@ -143,6 +143,16 @@ jobs:
           restore-keys: |
             rootfs-${{ runner.os }}-
 
+      - name: Cache ccache
+        id: cache-ccache
+        uses: actions/cache@v4
+        with:
+          path: cache/ccache
+          key: ccache-${{ runner.os }}-kernel-${{ github.run_id }}
+          restore-keys: |
+            ccache-${{ runner.os }}-kernel-
+            ccache-${{ runner.os }}-
+
       - name: Clean cache (if requested)
         if: ${{ github.event.inputs.clean_cache == 'true' }}
         run: |
@@ -160,6 +170,7 @@ jobs:
           if [[ "$TARGET" == "both" ]]; then
             ./build.sh --target sd $FORCE_LATEST 2>&1 | tee build-sd.log
             ./build.sh --target nvme $FORCE_LATEST 2>&1 | tee build-nvme.log
+            ./build.sh --target emmc $FORCE_LATEST 2>&1 | tee build-emmc.log
           else
             ./build.sh --target "$TARGET" $FORCE_LATEST 2>&1 | tee build.log
           fi
