@@ -26,7 +26,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            libguestfs-tools xfsprogs dosfstools mtools bc flex bison ccache
+            libguestfs-tools xfsprogs dosfstools mtools bc flex bison ccache libarchive-tools parted
 
       - name: Cache ccache
         uses: actions/cache@v4
