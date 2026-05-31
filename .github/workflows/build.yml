@@ -28,7 +28,7 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             libguestfs-tools xfsprogs dosfstools mtools bc flex bison ccache \
             libarchive-tools parted libgnutls28-dev libssl-dev swig python3 python3-pip \
-            python-is-python3 device-tree-compiler libelf-dev openssl
+            python-is-python3 libelf-dev openssl
 
       - name: Cache ccache
         uses: actions/cache@v4
