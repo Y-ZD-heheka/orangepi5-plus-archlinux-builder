@@ -6,14 +6,18 @@ on:
       - 'v*'
   workflow_dispatch:
 
+env:
+  CCACHE_DIR: /tmp/ccache
+  CCACHE_MAX_SIZE: 2G
+
 jobs:
   build:
-    runs-on: [self-hosted, linux, x64]
-    permissions:
-      contents: write
-    env:
-      CCACHE_DIR: /home/yzd/actions-ccache
-      CCACHE_MAX_SIZE: 10G
+    name: ${{ matrix.target }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [sd, emmc, nvme]
 
     steps:
       - uses: actions/checkout@v4
@@ -24,27 +28,42 @@ jobs:
           sudo apt-get install -y -qq --no-install-recommends \
             libguestfs-tools xfsprogs dosfstools mtools bc flex bison ccache
 
-      - name: Build SD image
-        run: ./build.sh --target sd 2>&1 | tee build-sd.log
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/ccache
+          key: ccache-${{ runner.os }}-${{ hashFiles('build.sh') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-
 
-      - name: Build eMMC image
-        # Reuses cached kernel/rootfs from SD build, only stage 7 (image) does real work
-        run: ./build.sh --target emmc 2>&1 | tee build-emmc.log
+      - name: Build ${{ matrix.target }} image
+        run: ./build.sh --target ${{ matrix.target }}
+        env:
+          BUILD_JOBS: 2
 
-      - name: Build NVMe image
-        run: ./build.sh --target nvme 2>&1 | tee build-nvme.log
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: output-${{ matrix.target }}
+          path: output/*
 
-      - name: Check outputs
-        run: ls -lh output/
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
 
       - name: Generate checksums
         run: |
-          cd output
-          shopt -s nullglob
-          for f in *.img.zst *.pkg.tar.zst image-info.txt; do
-            [ -f "$f" ] && sha256sum "$f" >> checksums.txt
-          done
-          cat checksums.txt
+          find artifacts -type f \( -name '*.img.zst' -o -name '*.pkg.tar.zst' \) \
+            -exec sha256sum {} \; | tee artifacts/checksums.txt
 
       - name: Create release
         uses: ncipollo/release-action@v1
@@ -54,27 +73,23 @@ jobs:
           body: |
             ## Orange Pi 5 Plus Arch Linux ARM Image
 
-            ### 构建产物
-            - `orangepi5-plus-sd-*.img.zst` — SD 卡镜像（U-Boot 写入镜像头）
-            - `orangepi5-plus-emmc-*.img.zst` — eMMC 模块镜像（U-Boot 写入镜像头）
-            - `orangepi5-plus-nvme-*.img.zst` — NVMe 磁盘镜像（U-Boot 预期在 SPI Flash）
-            - `linux-op5p-*.pkg.tar.zst` — 内核与内核头软件包，适用于已有系统
+            **Kernel**: 7.0.10 | **Build**: ${{ github.ref_name }}
 
-            ### 刷写
+            ### Images
+            - `orangepi5-plus-sd-*.img.zst` — SD 卡镜像
+            - `orangepi5-plus-emmc-*.img.zst` — eMMC 模块镜像
+            - `orangepi5-plus-nvme-*.img.zst` — NVMe 磁盘镜像
+
+            ### Packages
+            - `linux-op5p-*.pkg.tar.zst` — 内核包
+            - `linux-op5p-headers-*.pkg.tar.zst` — 内核头文件包
+
+            ### Flash
             ```bash
-            # SD / eMMC（无需解压）
             zstdcat orangepi5-plus-*-YYYYMMDD.img.zst | dd of=/dev/sdX bs=4M status=progress
-
-            # NVMe（需先将 U-Boot 写入 SPI Flash）
-            # 见 docs/spi-nvme-boot.md
             ```
-
-            默认 root 登录（串口 ttyS2, 1500000 baud）。
-          artifacts: |
-            output/*.img.zst
-            output/*.pkg.tar.zst
-            output/image-info.txt
-            output/checksums.txt
+          artifacts: artifacts/**/*
+          artifactContentType: application/zstd
           allowUpdates: true
           makeLatest: true
           draft: false
