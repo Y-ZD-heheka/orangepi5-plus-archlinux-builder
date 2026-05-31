@@ -37,7 +37,7 @@ set -euo pipefail
 BOARD="orangepi-5-plus"
 UBOOT_DEFCONFIG="orangepi-5-plus-rk3588_defconfig"
 
-TARGET="${TARGET:-sd}"                # sd (with U-Boot) or nvme (SPI flash boot)
+TARGET="${TARGET:-sd}"                # sd, emmc, or nvme (SPI flash boot)
 IMAGE_SIZE_MB=8192
 BOOT_SIZE_MB=512
 BOOT_START_MB=1
@@ -110,7 +110,7 @@ usage() {
 Usage: ./build.sh [OPTIONS]
 
 Options:
-  --target MODE       Target mode: sd (U-Boot on image) or nvme (SPI boot, default: sd)
+  --target MODE       Target mode: sd, emmc, or nvme (SPI boot, default: sd)
   --stage N           Start from stage N (0-8)
   --clean             Remove all build artifacts and cached sources
   --no-kernel         Skip kernel build (for testing bootloader/rootfs only)
@@ -123,9 +123,10 @@ Options:
   --help, -h          Show this help message
 
 Output:
-  sd:   output/orangepi5-plus-sd-YYYYMMDD.img.zst   — Compressed SD card image
+  sd:   output/orangepi5-plus-sd-YYYYMMDD.img.zst    — Compressed SD card image
+  emmc: output/orangepi5-plus-emmc-YYYYMMDD.img.zst  — Compressed eMMC image
   nvme: output/orangepi5-plus-nvme-YYYYMMDD.img.zst  — Compressed NVMe image
-  both: output/linux-op5p-*.pkg.tar.zst              — Arch Linux kernel packages
+  all:  output/linux-op5p-*.pkg.tar.zst              — Arch Linux kernel packages
 EOF
     exit 0
 }
@@ -510,7 +511,6 @@ stage_05_kernel() {
 
     # Trim kernel config: disable debug/tracing/XEN/unnecessary drivers
         "${kernel_src}/scripts/config" --disable DEBUG_INFO
-        "${kernel_src}/scripts/config" --disable DEBUG_FS
         "${kernel_src}/scripts/config" --disable FRAME_POINTER
         "${kernel_src}/scripts/config" --disable FUNCTION_TRACER
         "${kernel_src}/scripts/config" --disable STACK_TRACER
@@ -847,7 +847,7 @@ EOSCRIPT
                 --exclude='arch/powerpc' --exclude='arch/riscv' \
                 --exclude='arch/s390' --exclude='arch/sh' \
                 --exclude='arch/sparc' --exclude='arch/um' \
-                --exclude='arch/x86' --exclude='arch/xtensa' \
+                --exclude='arch/xtensa' \
                 -cf - -C "${SOURCES_DIR}/linux" . | tar -xf - -C "$ksrc_staging"
 
             # Copy .config and Module.symvers
@@ -938,11 +938,11 @@ stage_07_image() {
 
     local timestamp; timestamp=$(date +%Y%m%d)
     local image_file
-    if [[ "$TARGET" == "nvme" ]]; then
-        image_file="${OUTPUT_DIR}/orangepi5-plus-nvme-${timestamp}.img"
-    else
-        image_file="${OUTPUT_DIR}/orangepi5-plus-sd-${timestamp}.img"
-    fi
+    case "$TARGET" in
+        nvme) image_file="${OUTPUT_DIR}/orangepi5-plus-nvme-${timestamp}.img" ;;
+        emmc) image_file="${OUTPUT_DIR}/orangepi5-plus-emmc-${timestamp}.img" ;;
+        *)    image_file="${OUTPUT_DIR}/orangepi5-plus-sd-${timestamp}.img" ;;
+    esac
     local boot_img="${CACHE_DIR}/boot.img"
     local rootfs_tar="${CACHE_DIR}/rootfs.tar"
     local rootfs_dir="${CACHE_DIR}/rootfs"
@@ -1071,7 +1071,8 @@ GF
     echo "  Root:  ${ROOT_FSTYPE} (PARTUUID: ${part_uuid}, fstab UUID: ${root_uuid})"
     echo ""
 
-    if [[ "$TARGET" == "nvme" ]]; then
+    case "$TARGET" in
+        nvme)
         echo "  This image goes on NVMe. U-Boot must be flashed to SPI flash separately."
         echo "  See docs/spi-nvme-boot.md for instructions."
         echo ""
@@ -1080,13 +1081,22 @@ GF
         echo ""
         echo "  First boot: U-Boot on SPI → kernel+rootfs on NVMe"
         echo "  extlinux.conf on FAT32 boot partition, root filesystem on XFS partition"
-    else
+        ;;
+        emmc)
+        echo "  Flash to eMMC module (e.g. /dev/mmcblk1 on OP5P):"
+        echo "    dd if=${image_file} of=/dev/mmcblk1 bs=4M status=progress"
+        echo ""
+        echo "  Boot: BootROM → TPL(SPI) → SPL(eMMC) → BL31 → U-Boot proper → kernel"
+        echo "  extlinux.conf on FAT32 boot partition, root filesystem on ${ROOT_FSTYPE} partition"
+        ;;
+        *)
         echo "  Flash to SD card:"
         echo "    dd if=${image_file} of=/dev/sdX bs=4M status=progress"
         echo ""
         echo "  Boot: BootROM → TPL(SPI) → SPL(SD) → BL31 → U-Boot proper → kernel"
         echo "  extlinux.conf on FAT32 boot partition, root filesystem on ${ROOT_FSTYPE} partition"
-    fi
+        ;;
+    esac
     echo ""
     echo "  Default login (serial console ttyS2, 1500000 baud):"
     echo "    root / root"
@@ -1134,6 +1144,7 @@ stage_08_packages() {
     fi
 
     local pkgver="${KERNEL_VERSION#v}"
+    pkgver="${pkgver//-/_}"  # pacman uses last '-' to split pkgver/pkgrel
     pkgver="${pkgver}-1"
     local epoch; epoch=$(date +%s)
     local kernel_src="${SOURCES_DIR}/linux"
@@ -1244,7 +1255,7 @@ EOF
         --exclude='arch/powerpc' --exclude='arch/riscv' \
         --exclude='arch/s390' --exclude='arch/sh' \
         --exclude='arch/sparc' --exclude='arch/um' \
-        --exclude='arch/x86' --exclude='arch/xtensa' \
+        --exclude='arch/xtensa' \
         -cf - -C "$kernel_src" . | tar -xf - -C "$hsrc_staging"
 
     # Copy .config and Module.symvers
@@ -1374,8 +1385,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 case "$TARGET" in
-    sd|nvme) ;;
-    *) error "Invalid target: $TARGET (use sd or nvme)" ;;
+    sd|emmc|nvme) ;;
+    *) error "Invalid target: $TARGET (use sd, emmc, or nvme)" ;;
 esac
 
 [[ $CLEAN_BUILD -eq 1 ]] && clean_all
