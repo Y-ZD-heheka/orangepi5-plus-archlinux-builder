@@ -417,15 +417,43 @@ stage_05_kernel() {
         return
     fi
 
-    if [[ -f "${BUILD_DIR}/kernel/arch/arm64/boot/Image" ]] && \
-       [[ -f "${BUILD_DIR}/kernel/arch/arm64/boot/dts/rockchip/rk3588-orangepi-5-plus.dtb" ]]; then
+    local kernel_build="${BUILD_DIR}/kernel"
+
+    # ----------------------------------------------------------------------
+    # Memory-adaptive caching: automatically pick tmpfs when enough RAM
+    # ----------------------------------------------------------------------
+    # /dev/shm size ≈ 50% of physical RAM
+    #   < 2GB  → ccache on disk, build output on disk     (≤ 4GB RAM)
+    #   ≥ 2GB  → ccache on tmpfs, build output on disk     (≥ 8GB RAM, safe)
+    #   ≥ 15GB → ccache + build output on tmpfs            (≥ 32GB RAM, comfy)
+    # ----------------------------------------------------------------------
+    if [[ -d /dev/shm ]]; then
+        local shm_free_kb
+        shm_free_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
+        shm_free_kb=${shm_free_kb:-0}
+
+        if [[ "$shm_free_kb" -ge 15728640 ]]; then          # ≥ 15GB — tier 1
+            local mem_build_dir="/dev/shm/kernel-build"
+            mkdir -p "$mem_build_dir"
+            kernel_build="$mem_build_dir"
+            info "tmpfs tier 1: ccache + build output in /dev/shm"
+        elif [[ "$shm_free_kb" -ge 2097152 ]]; then          # ≥ 2GB  — tier 2
+            # ccache auto-detected below; build output stays on disk
+            info "tmpfs tier 2: ccache in /dev/shm, build output on disk"
+        else                                                  # < 2GB  — tier 3
+            info "tmpfs tier 3: ccache + build output on disk"
+        fi
+    fi
+
+    if [[ -f "${kernel_build}/arch/arm64/boot/Image" ]] && \
+       [[ -f "${kernel_build}/arch/arm64/boot/dts/rockchip/rk3588-orangepi-5-plus.dtb" ]]; then
         if [[ "${CLEAN_BUILD:-0}" -eq 1 ]]; then
-            rm -rf "${BUILD_DIR}/kernel"
+            rm -rf "${kernel_build}"
         else
-            export KERNEL_IMAGE="${BUILD_DIR}/kernel/arch/arm64/boot/Image"
-            export DTBS_DIR="${BUILD_DIR}/kernel/arch/arm64/boot/dts/rockchip"
+            export KERNEL_IMAGE="${kernel_build}/arch/arm64/boot/Image"
+            export DTBS_DIR="${kernel_build}/arch/arm64/boot/dts/rockchip"
             export KERNEL_VERSION
-            KERNEL_VERSION=$(cat "${BUILD_DIR}/kernel/.kernelrelease" 2>/dev/null || echo "unknown")
+            KERNEL_VERSION=$(cat "${kernel_build}/.kernelrelease" 2>/dev/null || echo "unknown")
             info "Using cached kernel (${KERNEL_VERSION})"
             return
         fi
@@ -495,7 +523,6 @@ stage_05_kernel() {
     local kernel_src="${SOURCES_DIR}/linux"
     info "Using kernel: ${kernel_tag}"
 
-    local kernel_build="${BUILD_DIR}/kernel"
     ensure_dir "$kernel_build"
 
     make -C "$kernel_src" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
@@ -669,22 +696,18 @@ stage_05_kernel() {
         local ccache_dir="${CCACHE_DIR:-${SCRIPT_DIR}/cache/ccache}"
         local max_size="${CCACHE_MAX_SIZE:-2G}"
 
-        # Auto-detect: use tmpfs if /dev/shm has >= 2GB free (unless user set CCACHE_DIR explicitly)
-        if [[ -z "${CCACHE_DIR:-}" ]] && [[ -d /dev/shm ]]; then
-            local shm_free_kb
-            shm_free_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
-            if [[ -n "$shm_free_kb" ]] && [[ "$shm_free_kb" -ge 2097152 ]]; then
-                ccache_dir="/dev/shm/ccache"
-                # Cap cache to 50% of available tmpfs
-                local auto_max=$((shm_free_kb / 2 / 1024))
-                if [[ "$auto_max" -gt 0 ]]; then
-                    max_size="${auto_max}M"
-                fi
-            fi
-        fi
-        # CCACHE_IN_MEM=1 forces tmpfs regardless
+        # tier 1/2: ccache in tmpfs (tier logic above already checked /dev/shm)
         if [[ "${CCACHE_IN_MEM:-0}" -eq 1 ]]; then
             ccache_dir="/dev/shm/ccache"
+        elif [[ -z "${CCACHE_DIR:-}" ]] && [[ -d /dev/shm ]]; then
+            local cshm_free_kb
+            cshm_free_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
+            if [[ -n "$cshm_free_kb" ]] && [[ "$cshm_free_kb" -ge 2097152 ]]; then
+                ccache_dir="/dev/shm/ccache"
+                # Cap cache to 25% of available tmpfs (leave room for build output if tier 1)
+                local auto_max_mb=$((cshm_free_kb / 4 / 1024))
+                [[ "$auto_max_mb" -gt 0 ]] && max_size="${auto_max_mb}M"
+            fi
         fi
 
         mkdir -p "$ccache_dir"
