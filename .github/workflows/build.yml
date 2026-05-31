@@ -25,10 +25,11 @@ jobs:
         run: ./build.sh --target sd 2>&1 | tee build-sd.log
 
       - name: Build eMMC image
-        run: ./build.sh --target emmc --stage 0 2>&1 | tee build-emmc.log
+        # Reuses cached kernel/rootfs from SD build, only stage 7 (image) does real work
+        run: ./build.sh --target emmc 2>&1 | tee build-emmc.log
 
       - name: Build NVMe image
-        run: ./build.sh --target nvme --stage 0 2>&1 | tee build-nvme.log
+        run: ./build.sh --target nvme 2>&1 | tee build-nvme.log
 
       - name: Check outputs
         run: ls -lh output/
