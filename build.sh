@@ -103,6 +103,94 @@ git_clone_commit() { local d="$1" r="$2" c="$3"; git init "$d"; git -C "$d" remo
 export GIT_SSL_NO_VERIFY=1
 
 # ---------------------------------------------------------------------------
+# MEMORY-ADAPTIVE LAYOUT
+# Called once at startup.  Dynamically allocates /dev/shm (tmpfs) space
+# in priority order.  Sets global MEM_* vars that each stage reads.
+# ---------------------------------------------------------------------------
+# Priority order (most impact first):
+#   1. ccache              (256M–25% of /dev/shm)
+#   2. kernel build output (~2 GB)
+#   3. intermediates       (~3.5 GB: boot.img + rootfs.tar)
+#   4. raw disk image      (IMAGE_SIZE_MB)
+# ---------------------------------------------------------------------------
+MEM_CCACHE_DIR=""
+MEM_CCACHE_MAX=""
+MEM_KERNEL_BUILD_DIR=""
+MEM_IMAGE_DIR=""
+MEM_INTERMEDIATES_DIR=""
+
+detect_memory_layout() {
+    MEM_CCACHE_DIR=""
+    MEM_CCACHE_MAX=""
+    MEM_KERNEL_BUILD_DIR=""
+    MEM_IMAGE_DIR=""
+    MEM_INTERMEDIATES_DIR=""
+
+    [[ -d /dev/shm ]] || { info "memory: no /dev/shm, all on disk"; return; }
+
+    local shm_total_kb shm_avail_kb
+    shm_total_kb=$(df --output=size /dev/shm 2>/dev/null | tail -1)
+    shm_avail_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
+    shm_total_kb=${shm_total_kb:-0}
+    shm_avail_kb=${shm_avail_kb:-0}
+    (( shm_avail_kb > 0 )) || { info "memory: no /dev/shm space, all on disk"; return; }
+
+    local total_gib=$(( shm_total_kb / 1024 / 1024 ))
+    local avail_gib=$(( shm_avail_kb / 1024 / 1024 ))
+
+    # Budget: 90% of available (leave 10% headroom for other processes)
+    local budget=$(( shm_avail_kb * 9 / 10 ))
+
+    local parts=()
+
+    # Priority 1: ccache (min 256M, max 25% of total /dev/shm)
+    local ccache_max_kb=$(( shm_total_kb / 4 ))
+    local ccache_min_kb=$(( 256 * 1024 ))
+    if (( budget >= ccache_min_kb )); then
+        local ccache_alloc=$(( ccache_max_kb < budget ? ccache_max_kb : budget ))
+        MEM_CCACHE_DIR="/dev/shm/ccache"
+        MEM_CCACHE_MAX="$(( ccache_alloc / 1024 ))M"
+        budget=$(( budget - ccache_alloc ))
+        parts+=("ccache(tmpfs)")
+    else
+        parts+=("ccache(disk)")
+    fi
+
+    # Priority 2: kernel build output (~2 GB of .o/.ko files)
+    if (( budget >= 2097152 )); then
+        MEM_KERNEL_BUILD_DIR="/dev/shm/kernel-build"
+        budget=$(( budget - 2097152 ))
+        parts+=("kernel(tmpfs)")
+    else
+        parts+=("kernel(disk)")
+    fi
+
+    # Priority 3: image intermediates (boot.img ~512M + rootfs.tar ~3 GB)
+    local inter_mb=$(( BOOT_SIZE_MB + 3072 ))
+    local inter_kb=$(( inter_mb * 1024 ))
+    if (( budget >= inter_kb )); then
+        MEM_INTERMEDIATES_DIR="/dev/shm"
+        budget=$(( budget - inter_kb ))
+        parts+=("intermediates(tmpfs)")
+    else
+        parts+=("intermediates(disk)")
+    fi
+
+    # Priority 4: raw disk image (IMAGE_SIZE_MB)
+    if (( budget >= IMAGE_SIZE_MB * 1024 )); then
+        MEM_IMAGE_DIR="/dev/shm"
+        budget=$(( budget - IMAGE_SIZE_MB * 1024 ))
+        parts+=("image(tmpfs)")
+    else
+        parts+=("image(disk)")
+    fi
+
+    # Summary line
+    local IFS=", "
+    info "memory: /dev/shm ${avail_gib}G/${total_gib}G free → ${parts[*]}"
+}
+
+# ---------------------------------------------------------------------------
 # USAGE
 # ---------------------------------------------------------------------------
 usage() {
@@ -417,40 +505,9 @@ stage_05_kernel() {
         return
     fi
 
-    local kernel_build="${BUILD_DIR}/kernel"
-
-    # ----------------------------------------------------------------------
-    # Memory-adaptive caching: automatically pick tmpfs when enough RAM
-    # ----------------------------------------------------------------------
-    # /dev/shm ≈ 50% of physical RAM.  Actual thresholds:
-    #   /dev/shm           RAM         tier  caching strategy
-    #   ─────────────────────────────────────────────────────
-    #   < 2GB              < 4GB       3     all on disk (min viable)
-    #   ≥ 2GB              ≥ 4GB       2     ccache in tmpfs
-    #   ≥ 15GB             ≥ 30GB      1     ccache + build in tmpfs
-    #
-    # NOTE: kernel compilation + guestfish needs ~6-8GB RAM total.
-    #   Tier 3 (<4GB) will work but may swap heavily — consider -j 2.
-    #   Tier 2 (4-30GB) is comfortable for most builds.
-    #   Tier 1 (≥30GB) avoids all disk I/O for kernel build.
-    # ----------------------------------------------------------------------
-    if [[ -d /dev/shm ]]; then
-        local shm_free_kb
-        shm_free_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
-        shm_free_kb=${shm_free_kb:-0}
-
-        if [[ "$shm_free_kb" -ge 15728640 ]]; then          # ≥ 15GB — tier 1
-            local mem_build_dir="/dev/shm/kernel-build"
-            mkdir -p "$mem_build_dir"
-            kernel_build="$mem_build_dir"
-            info "tmpfs tier 1: ccache + build output in /dev/shm"
-        elif [[ "$shm_free_kb" -ge 2097152 ]]; then          # ≥ 2GB  — tier 2
-            # ccache auto-detected below; build output stays on disk
-            info "tmpfs tier 2: ccache in /dev/shm, build output on disk"
-        else                                                  # < 2GB  — tier 3
-            info "tmpfs tier 3: ccache + build output on disk"
-        fi
-    fi
+    local kernel_build="${MEM_KERNEL_BUILD_DIR:-${BUILD_DIR}/kernel}"
+    ensure_dir "$kernel_build"
+    export KERNEL_BUILD_DIR="$kernel_build"
 
     if [[ -f "${kernel_build}/arch/arm64/boot/Image" ]] && \
        [[ -f "${kernel_build}/arch/arm64/boot/dts/rockchip/rk3588-orangepi-5-plus.dtb" ]]; then
@@ -503,7 +560,7 @@ stage_05_kernel() {
         if [[ "$FORCE_LATEST" -eq 1 ]]; then
             warn "Force update: removing kernel cache"
             rm -rf "${SOURCES_DIR}/linux"
-        elif [[ "$current_tag" == "$kernel_tag" ]]; then
+        elif [[ "${current_tag#v}" == "$kernel_tag" ]]; then
             info "Kernel source already at ${kernel_tag}, skipping clone"
         else
             warn "Updating kernel from ${current_tag:-unknown} to ${kernel_tag}"
@@ -700,22 +757,8 @@ stage_05_kernel() {
 
     # Enable ccache for kernel compilation if available
     if command -v ccache &>/dev/null; then
-        local ccache_dir="${CCACHE_DIR:-${SCRIPT_DIR}/cache/ccache}"
-        local max_size="${CCACHE_MAX_SIZE:-2G}"
-
-        # tier 1/2: ccache in tmpfs (tier logic above already checked /dev/shm)
-        if [[ "${CCACHE_IN_MEM:-0}" -eq 1 ]]; then
-            ccache_dir="/dev/shm/ccache"
-        elif [[ -z "${CCACHE_DIR:-}" ]] && [[ -d /dev/shm ]]; then
-            local cshm_free_kb
-            cshm_free_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
-            if [[ -n "$cshm_free_kb" ]] && [[ "$cshm_free_kb" -ge 2097152 ]]; then
-                ccache_dir="/dev/shm/ccache"
-                # Cap cache to 25% of available tmpfs (leave room for build output if tier 1)
-                local auto_max_mb=$((cshm_free_kb / 4 / 1024))
-                [[ "$auto_max_mb" -gt 0 ]] && max_size="${auto_max_mb}M"
-            fi
-        fi
+        local ccache_dir="${CCACHE_DIR:-${MEM_CCACHE_DIR:-${SCRIPT_DIR}/cache/ccache}}"
+        local max_size="${CCACHE_MAX_SIZE:-${MEM_CCACHE_MAX:-2G}}"
 
         mkdir -p "$ccache_dir"
         export CCACHE_DIR="$ccache_dir"
@@ -772,7 +815,7 @@ stage_06_rootfs() {
     if [[ "${SKIP_KERNEL:-0}" -eq 0 ]] && [[ -n "${KERNEL_VERSION:-}" ]]; then
         info "Installing kernel modules..."
         make -C "${SOURCES_DIR}/linux" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
-            O="${BUILD_DIR}/kernel" INSTALL_MOD_PATH="$rootfs_dir" \
+            O="${KERNEL_BUILD_DIR:-${BUILD_DIR}/kernel}" INSTALL_MOD_PATH="$rootfs_dir" \
             modules_install 2>&1 | tail -5
     fi
 
@@ -918,9 +961,9 @@ EOSCRIPT
                 -cf - -C "${SOURCES_DIR}/linux" . | tar -xf - -C "$ksrc_staging"
 
             # Copy .config and Module.symvers
-            cp "${BUILD_DIR}/kernel/.config" "$ksrc_staging/.config"
-            [[ -f "${BUILD_DIR}/kernel/Module.symvers" ]] && \
-                cp "${BUILD_DIR}/kernel/Module.symvers" "$ksrc_staging/"
+            cp "${KERNEL_BUILD_DIR:-${BUILD_DIR}/kernel}/.config" "$ksrc_staging/.config"
+            [[ -f "${KERNEL_BUILD_DIR:-${BUILD_DIR}/kernel}/Module.symvers" ]] && \
+                cp "${KERNEL_BUILD_DIR:-${BUILD_DIR}/kernel}/Module.symvers" "$ksrc_staging/"
 
             # Run modules_prepare to build infrastructure
             make -C "${SOURCES_DIR}/linux" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
@@ -1004,14 +1047,18 @@ stage_07_image() {
     header "Stage 7: Assembling bootable disk image"
 
     local timestamp; timestamp=$(date +%Y%m%d)
+
+    local img_dir="${MEM_IMAGE_DIR:-${OUTPUT_DIR}}"
+    local intermediates_dir="${MEM_INTERMEDIATES_DIR:-${CACHE_DIR}}"
+
     local image_file
     case "$TARGET" in
-        nvme) image_file="${OUTPUT_DIR}/orangepi5-plus-nvme-${timestamp}.img" ;;
-        emmc) image_file="${OUTPUT_DIR}/orangepi5-plus-emmc-${timestamp}.img" ;;
-        *)    image_file="${OUTPUT_DIR}/orangepi5-plus-sd-${timestamp}.img" ;;
+        nvme) image_file="${img_dir}/orangepi5-plus-nvme-${timestamp}.img" ;;
+        emmc) image_file="${img_dir}/orangepi5-plus-emmc-${timestamp}.img" ;;
+        *)    image_file="${img_dir}/orangepi5-plus-sd-${timestamp}.img" ;;
     esac
-    local boot_img="${CACHE_DIR}/boot.img"
-    local rootfs_tar="${CACHE_DIR}/rootfs.tar"
+    local boot_img="${intermediates_dir}/boot.img"
+    local rootfs_tar="${intermediates_dir}/rootfs.tar"
     local rootfs_dir="${CACHE_DIR}/rootfs"
     ensure_dir "$OUTPUT_DIR"
 
@@ -1176,6 +1223,14 @@ GF
     zstd -T0 -19 --rm "$image_file" -o "$compressed_file" 2>&1 | tail -3
     local compressed_size
     compressed_size=$(du -sh "$compressed_file" | cut -f1)
+
+    # If compressed in tmpfs, move final artifact to output directory
+    if [[ "$img_dir" == "/dev/shm" ]]; then
+        local final_compressed="${OUTPUT_DIR}/$(basename "$compressed_file")"
+        mv "$compressed_file" "$final_compressed"
+        compressed_file="$final_compressed"
+    fi
+
     info "Compressed image: ${compressed_size}"
 
     cat > "${OUTPUT_DIR}/image-info.txt" << EOF
@@ -1215,7 +1270,7 @@ stage_08_packages() {
     pkgver="${pkgver}-1"
     local epoch; epoch=$(date +%s)
     local kernel_src="${SOURCES_DIR}/linux"
-    local kernel_build="${BUILD_DIR}/kernel"
+    local kernel_build="${KERNEL_BUILD_DIR:-${BUILD_DIR}/kernel}"
 
     # -----------------------------------------------------------------------
     # Package 1: linux-op5p (kernel Image + modules + DTBs)
@@ -1460,6 +1515,8 @@ esac
 
 ensure_dir "$BUILD_DIR" "$CACHE_DIR" "$OUTPUT_DIR" "$SOURCES_DIR" \
     "${BUILD_DIR}/toolchain" 2>/dev/null || true
+
+detect_memory_layout
 
 ALL_STAGES=(stage_00_env stage_01_toolchain stage_02_rkbin \
             stage_03_tfa stage_04_uboot stage_05_kernel)

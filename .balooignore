@@ -1,0 +1,1 @@
+*.o *.ko *.cmd *.a *.so *.d *.dtb Image zImage
