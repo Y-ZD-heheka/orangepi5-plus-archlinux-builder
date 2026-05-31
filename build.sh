@@ -691,11 +691,16 @@ stage_05_kernel() {
         export CCACHE_DIR="$ccache_dir"
         ccache -M "$max_size" &>/dev/null || true
         info "ccache enabled (${ccache_dir}, max ${max_size})"
+
+        # Create ccache symlinks so the kernel build uses ccache transparently
+        local ccache_bin="${BUILD_DIR}/ccache-bin"
+        mkdir -p "$ccache_bin"
+        ln -sf "$(command -v ccache)" "$ccache_bin/${CROSS_COMPILE}gcc"
+        ln -sf "$(command -v ccache)" "$ccache_bin/${CROSS_COMPILE}g++"
+        export PATH="${ccache_bin}:${PATH}"
     fi
 
-    make -C "$kernel_src" ARCH=arm64 \
-        CC="ccache ${CROSS_COMPILE}gcc" \
-        CROSS_COMPILE="$CROSS_COMPILE" \
+    make -C "$kernel_src" ARCH=arm64 CROSS_COMPILE="$CROSS_COMPILE" \
         O="$kernel_build" -j "$BUILD_JOBS" Image dtbs modules 2>&1 | tail -20
 
     export KERNEL_VERSION
