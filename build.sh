@@ -667,13 +667,30 @@ stage_05_kernel() {
     # Enable ccache for kernel compilation if available
     if command -v ccache &>/dev/null; then
         local ccache_dir="${CCACHE_DIR:-${SCRIPT_DIR}/cache/ccache}"
+        local max_size="${CCACHE_MAX_SIZE:-2G}"
+
+        # Auto-detect: use tmpfs if /dev/shm has >= 2GB free (unless user set CCACHE_DIR explicitly)
+        if [[ -z "${CCACHE_DIR:-}" ]] && [[ -d /dev/shm ]]; then
+            local shm_free_kb
+            shm_free_kb=$(df --output=avail /dev/shm 2>/dev/null | tail -1)
+            if [[ -n "$shm_free_kb" ]] && [[ "$shm_free_kb" -ge 2097152 ]]; then
+                ccache_dir="/dev/shm/ccache"
+                # Cap cache to 50% of available tmpfs
+                local auto_max=$((shm_free_kb / 2 / 1024))
+                if [[ "$auto_max" -gt 0 ]]; then
+                    max_size="${auto_max}M"
+                fi
+            fi
+        fi
+        # CCACHE_IN_MEM=1 forces tmpfs regardless
         if [[ "${CCACHE_IN_MEM:-0}" -eq 1 ]]; then
             ccache_dir="/dev/shm/ccache"
         fi
+
         mkdir -p "$ccache_dir"
         export CCACHE_DIR="$ccache_dir"
-        ccache -M ${CCACHE_MAX_SIZE:-2G} &>/dev/null || true
-        info "ccache enabled (${ccache_dir}, max ${CCACHE_MAX_SIZE:-2G})"
+        ccache -M "$max_size" &>/dev/null || true
+        info "ccache enabled (${ccache_dir}, max ${max_size})"
     fi
 
     make -C "$kernel_src" ARCH=arm64 \
